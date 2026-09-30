@@ -46,4 +46,21 @@ docker exec care-backend-1 python manage.py migrate care_emergency
 docker exec care-backend-1 python manage.py test care_emergency --keepdb
 ```
 
-In production Care installs the plug from `plug_config.py` (`git+https://github.com/anupamkris-ihl/care_emergency.git@main`) during the image build.
+## Deploying to a Care instance
+
+Care installs plugs with pip while it builds the image (`docker/prod.Dockerfile` runs `install_plugins.py`). It also reads the plug list again at startup to build `INSTALLED_APPS`. So the plug has to be **in the image** and **in the runtime environment**.
+
+```bash
+PLUGS='[{"name":"care_emergency","package_name":"git+https://github.com/anupamkris-ihl/care_emergency.git","version":"@main"}]'
+
+# 1. Build (from a Care checkout)
+docker build -f docker/prod.Dockerfile --build-arg ADDITIONAL_PLUGS="$PLUGS" -t care:emergency .
+
+# 2. Run: set the same value as an env var on backend, celery worker and celery beat
+ADDITIONAL_PLUGS=$PLUGS
+
+# 3. Migrate (celery beat's start script already runs migrate)
+python manage.py migrate care_emergency
+```
+
+Alternatively, add the plug to `plug_config.py` in a Care fork. That covers both build and runtime, with no env var. Pin `version` to a tag (for example `@v0.1.0`) rather than `@main` for production.
