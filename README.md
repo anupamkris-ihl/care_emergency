@@ -24,7 +24,7 @@ Mounted by Care at `/api/care_emergency/`.
   "organizations": [],
   "triage": "red",
   "is_medico_legal": true,
-  "mlc_nature": "Road traffic accident",
+  "mlc_nature": "Road accident",
   "police_station": "Central",
   "distinguishing_marks": "Scar on left arm",
   "is_unidentified": true,

@@ -30,7 +30,7 @@ class EmergencyAPITests(CareAPITestBase):
             "patient": {"name": "Unknown Male", "gender": "male", "age": 35},
             "triage": "red",
             "is_medico_legal": True,
-            "mlc_nature": "Road traffic accident",
+            "mlc_nature": "Road accident",
             "police_station": "Central",
             "distinguishing_marks": "Scar on left arm",
             "brought_by": {

@@ -18,16 +18,12 @@ TRIAGE_PRIORITY = {
 }
 
 MLC_NATURES = [
-    "Road traffic accident",
+    "Road accident",
     "Assault",
-    "Burns",
+    "Burn",
     "Poisoning",
-    "Fall from height",
-    "Hanging / strangulation",
-    "Drowning",
-    "Animal bite",
+    "Suicide attempt",
+    "Bite",
     "Sexual assault",
-    "Industrial accident",
-    "Unknown",
-    "Other",
+    "Fall",
 ]
