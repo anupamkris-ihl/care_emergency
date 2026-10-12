@@ -9,12 +9,18 @@ from care_emergency.constants import (
     ABHA_STATUSES,
     ALLERGY_SEVERITIES,
     ALLERGY_STATUSES,
+    ART_MAN_AGES,
+    ART_WOMAN_AGES,
     ASSISTANCE_NEEDS,
     COMMUNICATION_CHANNELS,
     CONSENT_GIVERS,
     CONSENT_METHODS,
+    DESK_ARRIVAL_SOURCES,
     FRRO_C_FORM,
     GUARDIAN_RELATIONSHIPS,
+    GUIDANCE_AREAS,
+    GUIDANCE_RED_FLAGS,
+    GUIDANCE_SINCE,
     IDENTITY_CARD_TYPES,
     INTERNATIONAL_TYPES,
     MARITAL_STATUSES,
@@ -29,7 +35,11 @@ from care_emergency.constants import (
     UNIT_CODE_PATTERN,
     VISA_TYPES,
     BookingChannels,
+    CaptureMethods,
     ConsultationTypes,
+    DocumentCategories,
+    DocumentSides,
+    StatutoryCategories,
     TriageChoices,
     VisitPurposes,
 )
@@ -269,6 +279,7 @@ class RegistrationSpec(BaseModel):
             one_of(COMMUNICATION_CHANNELS, blank=False)(value)
         for value in self.promotion_purposes:
             one_of(PROMOTION_PURPOSES, blank=False)(value)
+        one_of(DESK_ARRIVAL_SOURCES, blank=False)(self.arrival_source)
         if self.promotion_purposes and not self.promotions_consent:
             raise ValueError("Promotion purposes need promotional consent")
         return self
@@ -373,6 +384,70 @@ class RegistrationSpec(BaseModel):
         return self
 
 
+def years_old(born, today):
+    return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+
+
+class PartnerSpec(BaseModel):
+    """The male partner of an IVF / ART couple (D45). Registered as his own
+    Care patient; his ID summary is kept like the patient's."""
+
+    first_name: str
+    middle_name: str = ""
+    last_name: str = ""
+    date_of_birth: datetime.date
+    phone_number: PhoneNumber = Field(max_length=14)
+    identity_card_type: str
+    identity_number_last4: str = Field(pattern=r"^[A-Z0-9]{4}$")
+    abha_number: str = Field(default="", pattern=r"^(?:\d{14})?$")
+    abha_address: str = Field(default="", max_length=60)
+    # Staged desk documents: at least his government ID.
+    documents: list[UUID4] = Field(default=[], max_length=10)
+
+    @model_validator(mode="after")
+    def validate_partner(self):
+        self.first_name = self.first_name.strip()
+        self.middle_name = self.middle_name.strip()
+        self.last_name = self.last_name.strip()
+        if not re.fullmatch(NAME_PART, self.first_name):
+            raise ValueError(
+                "The partner's first name must be 2-40 letters with single spaces"
+            )
+        for value in (self.middle_name, self.last_name):
+            if value and not re.fullmatch(NAME_PART, value):
+                raise ValueError(
+                    "The partner's names must be 2-40 letters with single spaces"
+                )
+        one_of(IDENTITY_CARD_TYPES, blank=False)(self.identity_card_type)
+        if self.abha_address and not re.fullmatch(ABHA_ADDRESS, self.abha_address):
+            raise ValueError("The partner's ABHA address must look like name@abdm")
+        return self
+
+    @property
+    def name(self):
+        parts = (self.first_name, self.middle_name, self.last_name)
+        return " ".join(part for part in parts if part)
+
+
+class CoupleSpec(BaseModel):
+    """IVF / ART couple registration (D45, R51, R52). A single woman registers
+    without a partner and without a marriage certificate."""
+
+    single_woman: bool = False
+    partner: PartnerSpec | None = None
+    art_consent: bool
+
+    @model_validator(mode="after")
+    def validate_couple(self):
+        if self.single_woman == (self.partner is not None):
+            raise ValueError(
+                "Enter the partner, or mark the registration as a single woman"
+            )
+        if not self.art_consent:
+            raise ValueError("The ART consent is required")
+        return self
+
+
 class DeskRegisterSpec(BaseModel):
     facility: UUID4 | None = None
     # Passed through to Care's PatientCreateSpec.
@@ -380,6 +455,36 @@ class DeskRegisterSpec(BaseModel):
     registration: RegistrationSpec
     # Issues a PRE- reference instead of a UHID; the UHID follows on arrival.
     pre_registration: bool = False
+    # Staged desk documents (documents/) to attach to the patient.
+    documents: list[UUID4] = Field(default=[], max_length=20)
+    couple: CoupleSpec | None = None
+
+    @model_validator(mode="after")
+    def validate_couple(self):
+        today = timezone.localdate()
+        couple = self.couple
+        if (self.registration.registration_type == "CPL") != (couple is not None):
+            raise ValueError("IVF / ART couple details go with the IVF couple type")
+        if couple is None:
+            return self
+        if self.patient.get("gender") != "female":
+            raise ValueError("Register the woman of an IVF / ART couple first")
+        try:
+            born = datetime.date.fromisoformat(self.patient.get("date_of_birth") or "")
+        except (TypeError, ValueError) as e:
+            raise ValueError("IVF / ART needs the woman's exact date of birth") from e
+        low, high = ART_WOMAN_AGES
+        if not low <= years_old(born, today) <= high:
+            err = f"The woman must be {low}-{high} years old for ART"
+            raise ValueError(err)
+        if couple.partner:
+            low, high = ART_MAN_AGES
+            if not low <= years_old(couple.partner.date_of_birth, today) <= high:
+                err = f"The partner must be {low}-{high} years old for ART"
+                raise ValueError(err)
+        if not self.registration.identity_card_type:
+            raise ValueError("Capture the woman's government ID for IVF / ART")
+        return self
 
     @model_validator(mode="after")
     def validate_patient(self):
@@ -394,6 +499,8 @@ class DeskRegisterSpec(BaseModel):
                 born = datetime.date.fromisoformat(dob)
             except (TypeError, ValueError) as e:
                 raise ValueError("Enter the date of birth as YYYY-MM-DD") from e
+            if born < datetime.date(1900, 1, 1) or born > today:
+                raise ValueError("Date of birth must be between 1900 and today")
             age = (
                 today.year
                 - born.year
@@ -401,6 +508,8 @@ class DeskRegisterSpec(BaseModel):
             )
         if not isinstance(age, int) or isinstance(age, bool):
             raise ValueError("Enter the date of birth or the age")
+        if not 0 <= age <= 120:  # noqa: PLR2004
+            raise ValueError("Age must be between 0 and 120")
         minor = age < 18  # noqa: PLR2004
         if minor and not dob:
             raise ValueError("Patients under 18 need an exact date of birth")
@@ -408,7 +517,10 @@ class DeskRegisterSpec(BaseModel):
             registration.guardian_name
             and registration.guardian_relationship
             and registration.next_of_kin_name
-            and registration.next_of_kin_phone
+            and (
+                registration.next_of_kin_phone
+                or registration.mobile_owner == "No phone"
+            )
         ):
             raise ValueError("Patients under 18 need a guardian and a next of kin")
         if minor and registration.marital_status:
@@ -420,7 +532,143 @@ class DeskRegisterSpec(BaseModel):
         phone = self.patient.get("phone_number")
         if phone and registration.alternate_phone_number == phone:
             raise ValueError("The alternate mobile must differ from the main number")
+        self.validate_demographics(minor)
+        self.validate_contact()
+        self.validate_policy_holder(age, minor)
         return self
+
+    def validate_demographics(self, minor):
+        registration = self.registration
+        gender = self.patient.get("gender")
+        titles = {"Mx"}
+        if gender == "male":
+            titles.add("Master" if minor else "Mr")
+        elif gender == "female":
+            titles.add("Ms")
+            if not minor:
+                titles.add("Mrs")
+        if not minor:
+            titles.add("Dr")
+        if registration.title not in titles:
+            raise ValueError("The title does not match the patient's gender and age")
+        relation = registration.guardian_relationship
+        if (relation == "S/O" and gender == "female") or (
+            relation == "D/O" and gender == "male"
+        ):
+            raise ValueError(
+                "The guardian relation does not match the patient's gender"
+            )
+        if minor:
+            if registration.occupation and registration.occupation not in (
+                "Student",
+                "Not applicable — child",
+            ):
+                raise ValueError(
+                    "A minor's occupation must be Student or Not applicable"
+                )
+            if registration.mobile_owner == "Self":
+                raise ValueError(
+                    "A minor's mobile must belong to a parent, guardian or relative"
+                )
+            if registration.consent_given_by not in ("Parent", "Guardian"):
+                raise ValueError(
+                    "A minor's consent must be given by a parent or guardian"
+                )
+            if not registration.next_of_kin_relationship:
+                raise ValueError("Enter the next of kin's relation")
+        domestic = registration.registration_type not in INTERNATIONAL_TYPES
+        if domestic and not registration.house:
+            raise ValueError("Enter the house, flat or building")
+        allowed_ids = {"passport", "oci_card", "unhcr_card"}
+        if domestic or registration.nationality_category == "NRI":
+            allowed_ids = {
+                "aadhaar",
+                "pan",
+                "passport",
+                "voter_id",
+                "driving_license",
+                "nrega",
+            }
+            if minor:
+                allowed_ids.add("birth_certificate")
+        if (
+            registration.identity_card_type
+            and registration.identity_card_type not in allowed_ids
+        ):
+            raise ValueError(
+                "The government ID type does not match nationality and age"
+            )
+
+    def validate_contact(self):
+        registration = self.registration
+        if registration.mobile_owner == "No phone":
+            if not self.facility:
+                raise ValueError("No phone registration needs a facility")
+            if (
+                self.patient.get("phone_number")
+                or registration.whatsapp_number
+                or registration.alternate_phone_number
+            ):
+                raise ValueError(
+                    "No phone registration cannot include a main, WhatsApp or alternate mobile"
+                )
+            if any(
+                channel != "Email" for channel in registration.communication_channels
+            ):
+                raise ValueError(
+                    "No phone registration cannot use phone communication channels"
+                )
+            if (
+                "Email" in registration.communication_channels
+                and not registration.email
+            ):
+                raise ValueError("Enter an email address for email communication")
+        pin = self.patient.get("pincode")
+        domestic = registration.registration_type not in INTERNATIONAL_TYPES
+        if (domestic or pin is not None) and (
+            isinstance(pin, bool) or not re.fullmatch(r"[1-9]\d{5}", str(pin))
+        ):
+            raise ValueError("PIN must be 6 digits and start with 1-9")
+        for label, phone in (
+            ("main mobile", self.patient.get("phone_number")),
+            ("WhatsApp mobile", registration.whatsapp_number),
+            ("alternate mobile", registration.alternate_phone_number),
+            ("next of kin mobile", registration.next_of_kin_phone),
+        ):
+            if (
+                phone
+                and (domestic or str(phone).startswith("+91"))
+                and not re.fullmatch(r"\+91[6-9]\d{9}", str(phone))
+            ):
+                raise ValueError(f"The {label} must have 10 Indian digits starting 6-9")
+
+    def validate_policy_holder(self, age, minor):
+        registration = self.registration
+        staff = registration.payer_type == "Staff"
+        dependant = staff and registration.payer_name == "POH staff — dependant"
+        if minor and staff and not dependant:
+            raise ValueError("A minor can only be a staff dependant, never staff self")
+        needs_holder = (
+            registration.payer_type in ("Corporate", "Insurance/TPA", "Govt scheme")
+            or dependant
+        )
+        relation = registration.policy_holder_relationship
+        if not needs_holder:
+            if relation and not (staff and relation == "Self"):
+                raise ValueError(
+                    "This payer does not need a policy-holder relationship"
+                )
+            return
+        allowed = {"Child"} if minor else {"Spouse", "Dependant parent"}
+        if not minor:
+            if not dependant:
+                allowed.add("Self")
+            if age < 25:  # noqa: PLR2004
+                allowed.add("Child")
+        if relation not in allowed:
+            raise ValueError(
+                "The policy-holder relationship does not match age and payer"
+            )
 
 
 class AppointmentBookSpec(BaseModel):
@@ -432,9 +680,57 @@ class AppointmentBookSpec(BaseModel):
     consultation_type: ConsultationTypes = ConsultationTypes.in_person
     # Left out: follow-up if the patient is inside the schedule's revisit window.
     visit_purpose: VisitPurposes | None = None
+    # "I don't know whom to meet" (D50). Red flags are refused, never stored.
+    guidance_area: str = ""
+    guidance_since: str = ""
+    red_flags: list[str] = []
+    chief_complaint: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def validate_guidance(self):
+        one_of(GUIDANCE_AREAS)(self.guidance_area)
+        one_of(GUIDANCE_SINCE)(self.guidance_since)
+        for flag in self.red_flags:
+            one_of(GUIDANCE_RED_FLAGS, blank=False)(flag)
+        if self.red_flags:
+            raise ValueError(
+                "Red flag: send the patient to the emergency desk, not an appointment"
+            )
+        self.chief_complaint = self.chief_complaint.strip()
+        return self
 
 
 class WalkInReserveWriteSpec(BaseModel):
     availability: UUID4
     # 4 holds back one seat in four. null removes the reserve.
     walk_in_every: int | None = Field(default=None, ge=2, le=20)
+
+
+class DocumentUploadSpec(BaseModel):
+    category: DocumentCategories
+    side: DocumentSides
+    capture_method: CaptureMethods
+    # Attaches to an existing patient; left out, the document is staged for a
+    # registration.
+    patient: UUID4 | None = None
+
+
+class StatutoryFlagSpec(BaseModel):
+    encounter: UUID4
+    category: StatutoryCategories
+
+
+class BreakGlassSpec(BaseModel):
+    reason: str = Field(min_length=10, max_length=500)
+
+
+class DeskContactSpec(BaseModel):
+    phone_number: PhoneNumber = Field(max_length=14)
+    mobile_owner: str
+
+    @model_validator(mode="after")
+    def validate_owner(self):
+        one_of([owner for owner in MOBILE_OWNERS if owner != "No phone"], blank=False)(
+            self.mobile_owner
+        )
+        return self

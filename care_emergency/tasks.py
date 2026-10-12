@@ -3,7 +3,8 @@ from care.utils.time_util import care_now
 from celery import Celery, current_app, shared_task
 from django.utils import timezone
 
-from care_emergency.models import AppointmentDetails
+from care_emergency.models import AppointmentDetails, PatientRegistration
+from care_emergency.contact import is_desk_phone
 
 
 @shared_task
@@ -24,6 +25,13 @@ def send_appointment_reminders():
         if not claimed:
             continue
         booking = details.booking
+        if (
+            is_desk_phone(booking.patient.phone_number)
+            or PatientRegistration.objects.filter(
+                patient=booking.patient, mobile_owner="No phone"
+            ).exists()
+        ):
+            continue
         start = timezone.localtime(booking.token_slot.start_datetime)
         doctor = booking.token_slot.resource.user
         with_doctor = f" with {doctor.get_full_name()}" if doctor else ""

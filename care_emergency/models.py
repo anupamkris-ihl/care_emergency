@@ -5,7 +5,11 @@ from django.db.models import Q
 
 from care_emergency.constants import (
     BookingChannels,
+    CaptureMethods,
     ConsultationTypes,
+    DocumentCategories,
+    DocumentSides,
+    StatutoryCategories,
     TriageChoices,
     VisitPurposes,
 )
@@ -232,6 +236,10 @@ class AppointmentDetails(EMRBaseModel):
     # Phone bookings only; sent by the send_appointment_reminders task.
     reminder_due_at = models.DateTimeField(null=True, blank=True)
     reminder_sent_at = models.DateTimeField(null=True, blank=True)
+    # "I don't know whom to meet" (D50); the remarks print as the chief complaint.
+    guidance_area = models.CharField(max_length=40, blank=True, default="")
+    guidance_since = models.CharField(max_length=20, blank=True, default="")
+    chief_complaint = models.CharField(max_length=500, blank=True, default="")
 
 
 class AppointmentSequence(models.Model):
@@ -286,3 +294,100 @@ class PatientNumberSequence(models.Model):
 
     def __str__(self):
         return f"{self.series}/{self.facility_id}/{self.period}: {self.last_value}"
+
+
+class PatientDocument(EMRBaseModel):
+    """A document captured at the desk (D37, D43). The file is a Care
+    FileUpload of the patient. Until the registration that uses it is saved,
+    patient is null and the file belongs to nobody (staged)."""
+
+    file = models.OneToOneField(
+        "emr.FileUpload", on_delete=models.PROTECT, related_name="desk_document"
+    )
+    patient = models.ForeignKey(
+        "emr.Patient",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="desk_documents",
+    )
+    category = models.CharField(max_length=30, choices=DocumentCategories.choices)
+    side = models.CharField(max_length=10, choices=DocumentSides.choices)
+    capture_method = models.CharField(max_length=20, choices=CaptureMethods.choices)
+
+
+class ArtCouple(EMRBaseModel):
+    """An IVF / ART couple registered together (D45). The woman is the
+    registered patient; the partner gets their own Care patient. A single
+    woman has no partner and needs no marriage certificate."""
+
+    woman = models.OneToOneField(
+        "emr.Patient", on_delete=models.PROTECT, related_name="art_couple"
+    )
+    partner = models.OneToOneField(
+        "emr.Patient",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="art_partner_of",
+    )
+    facility = models.ForeignKey(
+        "facility.Facility",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    single_woman = models.BooleanField(default=False)
+    art_consent = models.BooleanField(default=False)
+    # The partner's ID summary, kept like the patient's: type and last 4 only.
+    partner_identity_card_type = models.CharField(max_length=20, blank=True, default="")
+    partner_identity_number_last4 = models.CharField(
+        max_length=4, blank=True, default=""
+    )
+    partner_abha_number = models.CharField(max_length=14, blank=True, default="")
+    partner_abha_address = models.CharField(max_length=60, blank=True, default="")
+
+
+class RestrictedPatient(models.Model):
+    """A patient under statutory confidentiality (D30). Created with the first
+    flag; from then on the patient's identity is masked behind the alias for
+    everyone except the flagging clinicians and break-glass access."""
+
+    patient = models.OneToOneField(
+        "emr.Patient", on_delete=models.PROTECT, related_name="restriction"
+    )
+    alias = models.CharField(max_length=9, unique=True)
+    created_date = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.alias
+
+
+class StatutoryFlag(EMRBaseModel):
+    """One statutory flag, raised by a clinician in an encounter. The category
+    is never shown to the front desk."""
+
+    patient = models.ForeignKey(
+        "emr.Patient", on_delete=models.PROTECT, related_name="statutory_flags"
+    )
+    encounter = models.ForeignKey(
+        "emr.Encounter", on_delete=models.PROTECT, related_name="+"
+    )
+    category = models.CharField(max_length=20, choices=StatutoryCategories.choices)
+
+
+class BreakGlassAccess(models.Model):
+    """An audited, time-limited unmasking of a restricted patient for one
+    user. Rows are never edited or deleted."""
+
+    patient = models.ForeignKey(
+        "emr.Patient", on_delete=models.PROTECT, related_name="+"
+    )
+    user = models.ForeignKey("users.User", on_delete=models.PROTECT, related_name="+")
+    reason = models.CharField(max_length=500)
+    created_date = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"{self.user_id} → {self.patient_id} until {self.expires_at}"

@@ -14,7 +14,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 
-from care_emergency.models import AppointmentDetails, WalkInReserve
+from care_emergency.models import AppointmentDetails, WalkInReserve, EmergencyDesk
 from care_emergency.tasks import send_appointment_reminders
 
 
@@ -110,6 +110,30 @@ class AppointmentTests(CareAPITestBase):
             {"facility": str(self.facility.external_id), "date": self.tomorrow},
         )
         self.assertEqual(listed.data["count"], 1)
+
+    def test_guidance_is_kept_and_red_flags_go_to_emergency(self):
+        response = self.book(
+            booking_channel="front_desk",
+            guidance_area="Stomach / digestion",
+            guidance_since="4-7 days",
+            chief_complaint="  Acidity after meals  ",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(
+            response.data["details"]["chief_complaint"], "Acidity after meals"
+        )
+        details = AppointmentDetails.objects.get()
+        self.assertEqual(details.guidance_area, "Stomach / digestion")
+        self.assertEqual(details.guidance_since, "4-7 days")
+
+        response = self.book(
+            booking_channel="front_desk", red_flags=["Chest pain or pressure"]
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("emergency desk", str(response.data))
+        response = self.book(booking_channel="front_desk", guidance_area="Elbow")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(AppointmentDetails.objects.count(), 1)
 
     def test_appointment_numbers_are_consecutive(self):
         other = self.create_patient(phone_number="+919812345679")
@@ -222,3 +246,16 @@ class AppointmentTests(CareAPITestBase):
         self.assertEqual(
             Encounter.objects.get(external_id=response.data["id"]).encounter_class, "vr"
         )
+
+    def test_shared_desk_number_does_not_receive_patient_reminders(self):
+        EmergencyDesk.objects.create(
+            facility=self.facility, phone_number=self.patient.phone_number
+        )
+        response = self.book(booking_channel="phone")
+        self.assertEqual(response.status_code, 200, response.data)
+        AppointmentDetails.objects.filter(
+            external_id=response.data["details"]["id"]
+        ).update(reminder_due_at=timezone.now() - datetime.timedelta(minutes=1))
+        with mock.patch("care_emergency.tasks.send_text_message") as send:
+            send_appointment_reminders()
+            send.assert_not_called()

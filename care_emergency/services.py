@@ -3,7 +3,7 @@ import datetime
 from care.emr.api.viewsets.scheduling.availability import (
     convert_availability_and_exceptions_to_slots,
 )
-from care.emr.models import AvailabilityException, TokenBooking
+from care.emr.models import AvailabilityException, FileUpload, TokenBooking
 from care.emr.models.patient import PatientIdentifier, PatientIdentifierConfig
 from care.emr.resources.patient_identifier.spec import (
     IdentifierConfig,
@@ -17,8 +17,11 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from care_emergency.constants import (
+    DOCUMENT_FILE_CATEGORY,
     PATIENT_NUMBER_SYSTEMS,
     BookingChannels,
+    DocumentCategories,
+    DocumentSides,
     PatientNumberSeries,
     VisitPurposes,
 )
@@ -26,6 +29,7 @@ from care_emergency.models import (
     AppointmentSequence,
     FacilityUnit,
     MlcSequence,
+    PatientDocument,
     PatientNumberSequence,
     WalkInReserve,
 )
@@ -217,3 +221,94 @@ def default_visit_purpose(token_slot, patient):
         .exists()
     )
     return VisitPurposes.follow_up if earlier else VisitPurposes.new
+
+
+def store_document(user, upload, category, side, capture_method, patient=None):
+    """Saves the file as a Care FileUpload of the patient (or staged, with no
+    patient yet) and records what it is."""
+    with transaction.atomic():
+        file = FileUpload(
+            name=f"{DocumentCategories(category).label} ({DocumentSides(side).label})",
+            internal_name=upload.name,
+            associating_id=str(patient.external_id) if patient else "",
+            file_type="patient",
+            file_category=DOCUMENT_FILE_CATEGORY.get(category, "unspecified"),
+            meta={"mime_type": upload.content_type},
+            created_by=user,
+            updated_by=user,
+        )
+        file.save()
+        file.files_manager.put_object(file, upload.read())
+        file.upload_completed = True
+        file.save(skip_internal_name=True)
+        return PatientDocument.objects.create(
+            file=file,
+            patient=patient,
+            category=category,
+            side=side,
+            capture_method=capture_method,
+            created_by=user,
+            updated_by=user,
+        )
+
+
+def staged_documents(user, ids):
+    """The user's own staged documents with these ids, all or nothing."""
+    documents = list(
+        PatientDocument.objects.select_for_update().filter(
+            external_id__in=ids, patient__isnull=True, created_by=user
+        )
+    )
+    if len(documents) != len(set(ids)):
+        raise ValidationError("A document is missing or already used; upload it again")
+    return documents
+
+
+def attach_documents(documents, patient):
+    for document in documents:
+        document.patient = patient
+        document.save(update_fields=["patient", "modified_date"])
+        document.file.associating_id = str(patient.external_id)
+        document.file.save(update_fields=["associating_id", "modified_date"])
+
+
+def _complete(documents, category, *, both_sides=False):
+    sides = {x.side for x in documents if x.category == category}
+    if both_sides:
+        return (
+            DocumentSides.single in sides
+            or {
+                DocumentSides.front,
+                DocumentSides.back,
+            }
+            <= sides
+        )
+    return bool(sides)
+
+
+def missing_documents(registration, documents, couple=None, partner_documents=()):
+    """What v12.1 makes mandatory and the documents don't cover: the payer
+    card for any payer but self (R25, front and back unless it is a one-page
+    letter), passport and visa for foreign nationals (D43), and both IDs and
+    the marriage certificate for an IVF couple (R51)."""
+    missing = []
+    if registration.payer_type not in ("Self", "International") and not _complete(
+        documents, DocumentCategories.payer_card, both_sides=True
+    ):
+        missing.append("the payer card (front and back)")
+    if registration.nationality_category == "Foreign":
+        if not _complete(documents, DocumentCategories.passport):
+            missing.append("the passport")
+        if registration.visa_type != "Not required" and not _complete(
+            documents, DocumentCategories.visa
+        ):
+            missing.append("the visa")
+    if couple is not None:
+        if not _complete(documents, DocumentCategories.government_id):
+            missing.append("the woman's government ID")
+        if not couple.single_woman:
+            if not _complete(documents, DocumentCategories.marriage_certificate):
+                missing.append("the marriage certificate")
+            if not _complete(partner_documents, DocumentCategories.government_id):
+                missing.append("the partner's government ID")
+    return missing

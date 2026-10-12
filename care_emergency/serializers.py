@@ -1,4 +1,7 @@
+from django.utils import timezone
+
 from care_emergency.constants import CONSULTATION_ENCOUNTER_CLASS
+from care_emergency.models import ArtCouple, BreakGlassAccess
 
 
 def serialize_desk(desk):
@@ -147,9 +150,84 @@ def serialize_registration(record):
         "vip_flagged_by": record.vip_flagged_by.username
         if record.vip_flagged_by
         else None,
+        "couple": serialize_couple(record.patient),
+        "restricted": False,
         "created_date": record.created_date,
         "created_by": record.created_by.username if record.created_by else None,
     }
+
+
+def serialize_restricted_registration(record, restriction):
+    """What the desk sees of a restricted patient (D30): the alias, never the
+    identity, contact or the reason."""
+    return {
+        "id": str(record.external_id),
+        "patient": str(record.patient.external_id),
+        "facility": str(record.facility.external_id) if record.facility else None,
+        "registration_type": record.registration_type,
+        "restricted": True,
+        "alias": restriction.alias,
+        "created_date": record.created_date,
+    }
+
+
+def serialize_couple(patient):
+    couple = (
+        ArtCouple.objects.filter(woman=patient).select_related("partner").first()
+        or ArtCouple.objects.filter(partner=patient).select_related("woman").first()
+    )
+    if couple is None:
+        return None
+    return {
+        "woman": str(couple.woman.external_id),
+        "partner": str(couple.partner.external_id) if couple.partner else None,
+        "single_woman": couple.single_woman,
+        "art_consent": couple.art_consent,
+        "partner_identity_card_type": couple.partner_identity_card_type,
+        "partner_identity_number_last4": couple.partner_identity_number_last4,
+        "partner_abha_number": couple.partner_abha_number,
+        "partner_abha_address": couple.partner_abha_address,
+    }
+
+
+def serialize_document(document):
+    file = document.file
+    return {
+        "id": str(document.external_id),
+        "patient": str(document.patient.external_id) if document.patient else None,
+        "category": document.category,
+        "side": document.side,
+        "capture_method": document.capture_method,
+        "name": file.name,
+        "mime_type": file.meta.get("mime_type"),
+        "read_signed_url": file.files_manager.read_signed_url(file)
+        if document.patient
+        else None,
+        "created_date": document.created_date,
+        "created_by": document.created_by.username if document.created_by else None,
+    }
+
+
+def serialize_restriction(restriction, user, visible):
+    """visible: the user may see the identity, so the alias, categories and
+    their own break-glass expiry are shown too."""
+    if restriction is None:
+        return {"restricted": False}
+    data = {"restricted": True, "alias": restriction.alias, "can_see_identity": visible}
+    if visible:
+        patient = restriction.patient
+        data["categories"] = sorted(
+            set(patient.statutory_flags.values_list("category", flat=True))
+        )
+        access = (
+            BreakGlassAccess.objects.filter(
+                patient=patient, user=user, expires_at__gt=timezone.now()
+            )
+            .order_by("-expires_at")
+            .first()
+        )
+        data["break_glass_until"] = access.expires_at if access else None
+    return data
 
 
 def serialize_appointment(details):
@@ -162,6 +240,9 @@ def serialize_appointment(details):
         "encounter_class": CONSULTATION_ENCOUNTER_CLASS[details.consultation_type],
         "visit_purpose": details.visit_purpose,
         "booking_channel": details.booking_channel,
+        "guidance_area": details.guidance_area,
+        "guidance_since": details.guidance_since,
+        "chief_complaint": details.chief_complaint,
         "reminder_due_at": details.reminder_due_at,
         "reminder_sent_at": details.reminder_sent_at,
         "created_date": details.created_date,

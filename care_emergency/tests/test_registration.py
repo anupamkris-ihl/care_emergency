@@ -1,15 +1,44 @@
 import datetime
+from unittest import mock
 
 from care.emr.locks.billing import PatientCreateLock
-from care.emr.models import Patient
+from care.emr.models import FileUpload, Patient
 from care.utils.tests.base import CareAPITestBase
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 
-from care_emergency.models import FacilityUnit, PatientRegistration
+from care_emergency.models import (
+    ArtCouple,
+    FacilityUnit,
+    EmergencyDesk,
+    PatientDocument,
+    PatientRegistration,
+)
 
 PHONE = "+919812345678"
+
+
+def stage_document(user, category, side="single"):
+    """A staged desk document, as documents/ leaves it before registration."""
+    file = FileUpload.objects.create(
+        name=category,
+        internal_name="scan.jpg",
+        associating_id="",
+        file_type="patient",
+        file_category="unspecified",
+        upload_completed=True,
+        meta={"mime_type": "image/jpeg"},
+        created_by=user,
+    )
+    document = PatientDocument.objects.create(
+        file=file,
+        category=category,
+        side=side,
+        capture_method="photographed",
+        created_by=user,
+    )
+    return str(document.external_id)
 
 
 def in_years(years):
@@ -79,9 +108,10 @@ class DeskRegistrationTests(CareAPITestBase):
         self.client.force_authenticate(user=self.user)
         PatientCreateLock().release()
 
-    def body(self, patient=None, **registration):
+    def body(self, patient=None, documents=(), **registration):
         return {
             "facility": str(self.facility.external_id),
+            "documents": list(documents),
             "patient": {
                 "name": "Neha Sharma",
                 "gender": "female",
@@ -136,7 +166,11 @@ class DeskRegistrationTests(CareAPITestBase):
     def test_international_patient_keeps_interpreter_and_c_form(self):
         response = self.register(
             self.body(
-                patient={"phone_number": "+447911123456"},
+                patient={"phone_number": "+447911123456", "pincode": None},
+                documents=[
+                    stage_document(self.user, "passport"),
+                    stage_document(self.user, "visa"),
+                ],
                 registration_type="INT",
                 nationality_category="Foreign",
                 nationality="United Kingdom",
@@ -165,6 +199,141 @@ class DeskRegistrationTests(CareAPITestBase):
         self.assertEqual(record.frro_c_form, "Auto-file within 24 h")
         self.assertTrue(record.is_vip)
         self.assertEqual(record.vip_flagged_by, self.user)
+        documents = PatientDocument.objects.filter(patient=record.patient)
+        self.assertEqual(documents.count(), 2)
+        self.assertEqual(
+            {x.file.associating_id for x in documents},
+            {str(record.patient.external_id)},
+        )
+
+    def test_non_self_payer_needs_both_sides_of_the_card(self):
+        corporate = {
+            "registration_type": "CORP",
+            "payer_type": "Corporate",
+            "payer_name": "Infosys",
+            "employee_id": "INF-2231",
+            "policy_holder_relationship": "Self",
+        }
+        self.assert_rejected(self.body(**corporate), "the payer card (front and back)")
+        front = stage_document(self.user, "payer_card", "front")
+        self.assert_rejected(
+            self.body(documents=[front], **corporate), "the payer card"
+        )
+        back = stage_document(self.user, "payer_card", "back")
+        response = self.register(self.body(documents=[front, back], **corporate))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        # A one-page sponsor letter is enough on its own.
+        PatientCreateLock().release()
+        letter = stage_document(self.user, "payer_card", "single")
+        response = self.register(
+            self.body(
+                patient={"name": "Asha Rao", "phone_number": "+919812345600"},
+                documents=[letter],
+                **corporate,
+            )
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+    def test_documents_must_be_the_users_own_and_unused(self):
+        other = self.create_super_user()
+        foreign = stage_document(other, "passport")
+        self.assert_rejected(self.body(documents=[foreign]), "upload it again")
+
+    def couple_body(self, partner=None, couple=None, **kwargs):
+        partner_body = {
+            "first_name": "Rohit",
+            "last_name": "Sharma",
+            "date_of_birth": "1988-02-10",
+            "phone_number": "+919812345699",
+            "identity_card_type": "pan",
+            "identity_number_last4": "234F",
+            "documents": [stage_document(self.user, "government_id", "front")],
+            **(partner or {}),
+        }
+        body = self.body(
+            documents=kwargs.pop(
+                "documents",
+                [
+                    stage_document(self.user, "government_id", "front"),
+                    stage_document(self.user, "marriage_certificate"),
+                ],
+            ),
+            registration_type="CPL",
+            **kwargs,
+        )
+        body["couple"] = {
+            "partner": partner_body,
+            "art_consent": True,
+            **(couple or {}),
+        }
+        return body
+
+    def test_ivf_couple_registers_both_partners(self):
+        response = self.register(self.couple_body())
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        couple = ArtCouple.objects.get()
+        woman = Patient.objects.get(external_id=response.data["patient"]["id"])
+        self.assertEqual(couple.woman, woman)
+        self.assertEqual(couple.partner.name, "Rohit Sharma")
+        self.assertEqual(couple.partner.gender, "male")
+        self.assertEqual(couple.partner.address, woman.address)
+        self.assertEqual(couple.partner_identity_number_last4, "234F")
+        self.assertTrue(couple.art_consent)
+        self.assertEqual(
+            PatientDocument.objects.get(patient=couple.partner).category,
+            "government_id",
+        )
+        self.assertEqual(PatientDocument.objects.filter(patient=woman).count(), 2)
+        self.assertTrue(couple.partner.instance_identifiers)
+        detail = self.client.get(
+            reverse("desk-registration-detail", args=[woman.external_id])
+        )
+        self.assertEqual(
+            detail.data["couple"]["partner"], str(couple.partner.external_id)
+        )
+
+    def test_single_woman_needs_no_partner_or_certificate(self):
+        body = self.couple_body(
+            documents=[stage_document(self.user, "government_id")],
+            couple={"single_woman": True, "partner": None},
+        )
+        response = self.register(body)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertIsNone(ArtCouple.objects.get().partner)
+
+    def test_ivf_couple_rules(self):
+        cases = [
+            (
+                self.couple_body(patient={"date_of_birth": "2008-01-01"}),
+                "21-50 years old",
+            ),
+            (
+                self.couple_body(partner={"date_of_birth": "1960-01-01"}),
+                "21-55 years old",
+            ),
+            (self.couple_body(patient={"gender": "male"}), "the woman"),
+            (self.couple_body(couple={"art_consent": False}), "ART consent"),
+            (
+                self.couple_body(couple={"single_woman": True}),
+                "single woman",
+            ),
+            (
+                self.couple_body(
+                    documents=[stage_document(self.user, "government_id")]
+                ),
+                "the marriage certificate",
+            ),
+            (
+                self.couple_body(partner={"documents": []}),
+                "the partner's government ID",
+            ),
+        ]
+        for body, message in cases:
+            with self.subTest(message=message):
+                self.assert_rejected(body, message)
+        not_couple = self.body()
+        not_couple["couple"] = self.couple_body()["couple"]
+        self.assert_rejected(not_couple, "IVF couple type")
 
     def test_registration_rules(self):
         cases = [
@@ -217,9 +386,113 @@ class DeskRegistrationTests(CareAPITestBase):
                 next_of_kin_name="Rakesh Sharma",
                 next_of_kin_relationship="Father",
                 next_of_kin_phone="+919811640021",
+                consent_given_by="Parent",
             )
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+    def child_body(self, **registration):
+        return self.body(
+            patient={"date_of_birth": f"{timezone.localdate().year - 10}-01-01"},
+            **{
+                "marital_status": "",
+                "pregnancy_status": "",
+                "mobile_owner": "Parent",
+                "guardian_name": "Rakesh Sharma",
+                "guardian_relationship": "D/O",
+                "next_of_kin_name": "Rakesh Sharma",
+                "next_of_kin_relationship": "Father",
+                "next_of_kin_phone": "+919811640021",
+                "consent_given_by": "Parent",
+                **registration,
+            },
+        )
+
+    def test_pin_and_mobile_rules_cannot_be_bypassed(self):
+        for pin in (None, 0, 11002, 1100245, "010024", True, "abc123"):
+            with self.subTest(pin=pin):
+                self.assert_rejected(self.body(patient={"pincode": pin}), "PIN must")
+        for phone in ("+915123456789", "+447911123456", "+91981234567"):
+            with self.subTest(phone=phone):
+                self.assert_rejected(
+                    self.body(patient={"phone_number": phone}), "main mobile"
+                )
+        for field in ("whatsapp_number", "alternate_phone_number", "next_of_kin_phone"):
+            with self.subTest(field=field):
+                self.assert_rejected(
+                    self.body(**{field: "+915123456789"}), "starting 6-9"
+                )
+
+    def test_demographic_rules_cannot_be_bypassed(self):
+        for registration, message in (
+            ({"title": "Mr"}, "title does not match"),
+            ({"guardian_relationship": "S/O"}, "guardian relation"),
+            ({"house": " "}, "house, flat or building"),
+            ({"identity_card_type": "oci_card"}, "nationality and age"),
+            ({"identity_card_type": "birth_certificate"}, "nationality and age"),
+        ):
+            with self.subTest(registration=registration):
+                self.assert_rejected(self.body(**registration), message)
+        for registration, message in (
+            ({"title": "Mrs"}, "title does not match"),
+            ({"occupation": "Business"}, "minor's occupation"),
+            ({"mobile_owner": "Self"}, "minor's mobile"),
+            ({"consent_given_by": "The patient"}, "minor's consent"),
+            ({"next_of_kin_relationship": ""}, "kin's relation"),
+        ):
+            with self.subTest(registration=registration):
+                self.assert_rejected(self.child_body(**registration), message)
+
+    def test_policy_holder_rules_cannot_be_bypassed(self):
+        corporate = {
+            "registration_type": "CORP",
+            "payer_type": "Corporate",
+            "payer_name": "Infosys",
+            "employee_id": "INF-2231",
+        }
+        for relation in ("", "Friend", "Child"):
+            with self.subTest(relation=relation):
+                self.assert_rejected(
+                    self.body(**corporate, policy_holder_relationship=relation),
+                    "policy-holder relationship",
+                )
+        self.assert_rejected(
+            self.child_body(**corporate, policy_holder_relationship="Self"),
+            "policy-holder relationship",
+        )
+        staff = {
+            "registration_type": "STAFF",
+            "payer_type": "Staff",
+            "payer_name": "POH staff — dependant",
+            "employee_id": "EMP-221",
+        }
+        self.assert_rejected(
+            self.body(**staff, policy_holder_relationship="Self"),
+            "policy-holder relationship",
+        )
+        self.assert_rejected(
+            self.child_body(**{**staff, "payer_name": "POH staff — self"}),
+            "never staff self",
+        )
+        card = stage_document(self.user, "payer_card")
+        response = self.register(
+            self.child_body(
+                documents=[card], **staff, policy_holder_relationship="Child"
+            )
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(
+            PatientRegistration.objects.get().policy_holder_relationship, "Child"
+        )
+
+    def test_digital_arrival_is_not_a_counter_source(self):
+        self.assert_rejected(
+            self.body(arrival_source="Digital / app", lead_source="POH app"),
+            "is not one of",
+        )
+        self.assert_rejected(
+            self.body(arrival_source="Unknown source"), "is not one of"
+        )
 
     def test_patient_rejected_by_care_leaves_no_registration(self):
         self.assert_rejected(
@@ -238,3 +511,296 @@ class DeskRegistrationTests(CareAPITestBase):
             reverse("desk-registration-detail", args=[patient.external_id])
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def no_phone_body(self, **registration):
+        return self.body(
+            patient={"phone_number": None},
+            **{
+                "mobile_owner": "No phone",
+                "whatsapp_number": None,
+                "communication_channels": [],
+                **registration,
+            },
+        )
+
+    def create_no_phone(self, body=None):
+        EmergencyDesk.objects.get_or_create(
+            facility=self.facility, defaults={"phone_number": "+919876543210"}
+        )
+        response = self.register(body or self.no_phone_body())
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        return Patient.objects.get(external_id=response.data["patient"]["id"]), response
+
+    def test_no_phone_uses_desk_fallback_and_normal_uhid(self):
+        patient, response = self.create_no_phone()
+        self.assertEqual(patient.phone_number, "+919876543210")
+        self.assertEqual(response.data["patient"]["phone_number"], "")
+        record = PatientRegistration.objects.get(patient=patient)
+        self.assertEqual(record.mobile_owner, "No phone")
+        self.assertEqual(record.whatsapp_number, "")
+        self.assertEqual(record.communication_channels, [])
+        number = next(
+            item["value"]
+            for item in response.data["patient"]["instance_identifiers"]
+            if item["config"]["config"]["system"] == "care_emergency/uhid"
+        )
+        self.assertTrue(number.startswith("POH-LN-"))
+        lookup = self.client.get(
+            reverse("patient-number-search"), {"uhid": number.lower()}
+        )
+        self.assertEqual(lookup.status_code, 200, lookup.data)
+        self.assertEqual(lookup.data["results"][0]["id"], str(patient.external_id))
+        self.assertEqual(lookup.data["results"][0]["phone_number"], "")
+        detail = self.client.get(f"/api/v1/patient/{patient.external_id}/")
+        self.assertEqual(detail.data["phone_number"], "")
+        listing = self.client.get("/api/v1/patient/")
+        self.assertEqual(listing.data["results"][0]["phone_number"], "")
+        self.assertFalse(patient.emergency_encounters.exists())
+
+    def test_no_phone_missing_configuration_and_conflicts_roll_back(self):
+        self.assert_rejected(self.no_phone_body(), "desk number")
+        body = self.no_phone_body()
+        body["facility"] = None
+        self.assert_rejected(body, "needs a facility")
+        for changes in (
+            {"whatsapp_number": PHONE},
+            {"alternate_phone_number": PHONE},
+            {"communication_channels": ["SMS"]},
+            {"communication_channels": ["Email"]},
+        ):
+            with self.subTest(changes=changes):
+                self.assert_rejected(
+                    self.no_phone_body(**changes),
+                    "No phone"
+                    if "Email" not in changes.get("communication_channels", [])
+                    else "email address",
+                )
+        body = self.no_phone_body()
+        body["patient"]["phone_number"] = PHONE
+        self.assert_rejected(body, "No phone")
+
+    def test_minor_no_phone_keeps_guardian_without_requiring_a_number(self):
+        body = self.child_body(
+            mobile_owner="No phone",
+            whatsapp_number=None,
+            communication_channels=[],
+            next_of_kin_phone=None,
+        )
+        body["patient"]["phone_number"] = None
+        patient, _ = self.create_no_phone(body)
+        record = PatientRegistration.objects.get(patient=patient)
+        self.assertEqual(record.guardian_name, "Rakesh Sharma")
+        self.assertEqual(record.next_of_kin_relationship, "Father")
+        self.assertEqual(record.next_of_kin_phone, "")
+
+    def test_multiple_no_phone_patients_have_distinct_uhids(self):
+        first, response = self.create_no_phone()
+        second, another = self.create_no_phone()
+        self.assertNotEqual(first.external_id, second.external_id)
+        self.assertEqual(first.phone_number, second.phone_number)
+        self.assertNotEqual(
+            response.data["patient"]["instance_identifiers"],
+            another.data["patient"]["instance_identifiers"],
+        )
+
+    def test_add_contact_preserves_uhid_and_audits_owner(self):
+        patient, response = self.create_no_phone()
+        identifiers = response.data["patient"]["instance_identifiers"]
+        preserved = {
+            field: response.data["patient"][field]
+            for field in (
+                "name",
+                "gender",
+                "date_of_birth",
+                "address",
+                "pincode",
+                "blood_group",
+            )
+        }
+        url = reverse("patient-contact", args=[patient.external_id])
+        for phone in ("+919876543210", "+915123456789", "+447911123456"):
+            rejected = self.client.patch(
+                url, {"phone_number": phone, "mobile_owner": "Relative"}, format="json"
+            )
+            self.assertEqual(rejected.status_code, 400, rejected.data)
+            patient.refresh_from_db()
+            self.assertEqual(patient.phone_number, "+919876543210")
+        updated = self.client.patch(
+            url, {"phone_number": PHONE, "mobile_owner": "Relative"}, format="json"
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["phone_number"], PHONE)
+        self.assertEqual(updated.data["instance_identifiers"], identifiers)
+        self.assertEqual({field: updated.data[field] for field in preserved}, preserved)
+        record = PatientRegistration.objects.get(patient=patient)
+        self.assertEqual(record.mobile_owner, "Relative")
+        self.assertEqual(record.updated_by, self.user)
+        self.assertEqual(
+            self.client.get(f"/api/v1/patient/{patient.external_id}/").data[
+                "phone_number"
+            ],
+            PHONE,
+        )
+        self.assertEqual(
+            self.client.patch(
+                url, {"phone_number": PHONE, "mobile_owner": "Self"}, format="json"
+            ).status_code,
+            400,
+        )
+
+    def test_no_phone_permissions_for_lookup_and_contact(self):
+        patient, response = self.create_no_phone()
+        number = response.data["patient"]["instance_identifiers"][0]["value"]
+        with mock.patch("care_emergency.views.can", return_value=False):
+            lookup = self.client.get(reverse("patient-number-search"), {"uhid": number})
+            self.assertEqual(lookup.data["results"], [])
+            update = self.client.patch(
+                reverse("patient-contact", args=[patient.external_id]),
+                {"phone_number": PHONE, "mobile_owner": "Self"},
+                format="json",
+            )
+            self.assertEqual(update.status_code, 403)
+            rejected = self.register(self.no_phone_body())
+            self.assertEqual(rejected.status_code, 403)
+        patient.refresh_from_db()
+        self.assertEqual(patient.phone_number, "+919876543210")
+        self.assertEqual(Patient.objects.count(), 1)
+
+    def test_shared_desk_number_cannot_be_used_for_patient_otp_or_token(self):
+        from config.patient_otp_authentication import JWTTokenPatientAuthentication
+        from rest_framework_simplejwt.exceptions import InvalidToken
+
+        self.create_no_phone()
+        self.client.force_authenticate(user=None)
+        for endpoint, data in (
+            ("otp-login-send", {"phone_number": "+919876543210"}),
+            ("otp-login-login", {"phone_number": "+919876543210", "otp": "45612"}),
+        ):
+            with (
+                self.subTest(endpoint=endpoint),
+                mock.patch(
+                    "care.emr.api.otp_viewsets.login.sms.send_text_message"
+                ) as send,
+            ):
+                rejected = self.client.post(reverse(endpoint), data, format="json")
+                self.assertEqual(rejected.status_code, 400, rejected.data)
+                send.assert_not_called()
+        with self.assertRaises(InvalidToken):
+            JWTTokenPatientAuthentication().get_user({"phone_number": "+919876543210"})
+        self.assertEqual(
+            JWTTokenPatientAuthentication()
+            .get_user({"phone_number": PHONE})
+            .phone_number,
+            PHONE,
+        )
+
+    def test_minor_contact_owner_and_number_are_required_after_no_phone(self):
+        body = self.child_body(
+            mobile_owner="No phone",
+            whatsapp_number=None,
+            communication_channels=[],
+            next_of_kin_phone=None,
+        )
+        body["patient"]["phone_number"] = None
+        patient, _ = self.create_no_phone(body)
+        url = reverse("patient-contact", args=[patient.external_id])
+        for owner in ("Self", "No phone", "Other"):
+            response = self.client.patch(
+                url, {"phone_number": PHONE, "mobile_owner": owner}, format="json"
+            )
+            self.assertEqual(response.status_code, 400, response.data)
+        response = self.client.patch(
+            url, {"phone_number": PHONE, "mobile_owner": "Parent"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            PatientRegistration.objects.get(patient=patient).mobile_owner, "Parent"
+        )
+
+    def test_no_phone_can_use_email_without_enabling_mobile_channels(self):
+        patient, _ = self.create_no_phone(
+            self.no_phone_body(
+                email="neha@example.com", communication_channels=["Email"]
+            )
+        )
+        self.assertEqual(
+            PatientRegistration.objects.get(patient=patient).communication_channels,
+            ["Email"],
+        )
+
+    def test_old_fallback_stays_blocked_after_desk_number_changes(self):
+        from care.emr.resources.patient.hooks import patient_phone_allowed
+
+        self.create_no_phone()
+        EmergencyDesk.objects.filter(facility=self.facility).update(
+            phone_number="+919876543211"
+        )
+        self.assertFalse(patient_phone_allowed("+919876543210"))
+        self.assertFalse(patient_phone_allowed("+919876543211"))
+        self.assertTrue(patient_phone_allowed(PHONE))
+
+    def test_desk_staff_can_register_and_lookup_without_encounter_permissions(self):
+        desk = self.create_user()
+        org = self.create_facility_organization(facility=self.facility)
+        self.attach_role_facility_organization_user(
+            org,
+            desk,
+            self.create_role_with_permissions(
+                ["can_create_patient", "can_list_patients", "can_write_patient"]
+            ),
+        )
+        self.client.force_authenticate(user=desk)
+        patient, response = self.create_no_phone()
+        self.assertFalse(patient.emergency_encounters.exists())
+        self.assertEqual(
+            self.client.get(f"/api/v1/patient/{patient.external_id}/").status_code, 200
+        )
+        number = response.data["patient"]["instance_identifiers"][0]["value"]
+        lookup = self.client.get(reverse("patient-number-search"), {"uhid": number})
+        self.assertEqual(lookup.data["count"], 1)
+        self.assertEqual(self.client.get("/api/v1/patient/").data["count"], 1)
+        updated = self.client.patch(
+            reverse("patient-contact", args=[patient.external_id]),
+            {"phone_number": PHONE, "mobile_owner": "Self"},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        # The registration facility remains the association after adding a phone.
+        self.assertEqual(
+            self.client.get(reverse("patient-number-search"), {"uhid": number}).data[
+                "count"
+            ],
+            1,
+        )
+        outsider = self.create_user()
+        self.client.force_authenticate(user=outsider)
+        self.assertEqual(
+            self.client.get(reverse("patient-number-search"), {"uhid": number}).data[
+                "count"
+            ],
+            0,
+        )
+        self.assertEqual(self.client.get("/api/v1/patient/").data["count"], 0)
+        self.assertEqual(
+            self.client.get(f"/api/v1/patient/{patient.external_id}/").status_code, 404
+        )
+
+    def test_no_phone_cannot_borrow_another_facility_desk(self):
+        EmergencyDesk.objects.create(
+            facility=self.facility, phone_number="+919876543210"
+        )
+        other_user = self.create_user()
+        other_facility = self.create_facility(user=other_user)
+        org = self.create_facility_organization(facility=other_facility)
+        self.attach_role_facility_organization_user(
+            org,
+            other_user,
+            self.create_role_with_permissions(
+                ["can_create_patient", "can_list_patients"]
+            ),
+        )
+        self.client.force_authenticate(user=other_user)
+        rejected = self.register(self.no_phone_body())
+        self.assertEqual(rejected.status_code, 403, rejected.data)
+        self.assertFalse(Patient.objects.exists())
+        self.assertFalse(PatientRegistration.objects.exists())

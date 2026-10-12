@@ -3,13 +3,18 @@ from django.contrib import admin
 from care_emergency.models import (
     AppointmentDetails,
     AppointmentSequence,
+    ArtCouple,
+    BreakGlassAccess,
     EmergencyDesk,
     EmergencyEncounter,
     FacilityUnit,
     MlcSequence,
+    PatientDocument,
     PatientNumberSequence,
     PatientRegistration,
     RegistrationAllergy,
+    RestrictedPatient,
+    StatutoryFlag,
     WalkInReserve,
 )
 
@@ -109,3 +114,46 @@ class PatientNumberSequenceAdmin(admin.ModelAdmin):
     list_display = ("series", "facility", "period", "last_value")
     list_filter = ("series",)
     raw_id_fields = ("facility",)
+
+
+@admin.register(PatientDocument)
+class PatientDocumentAdmin(admin.ModelAdmin):
+    list_display = ("category", "side", "capture_method", "patient", "created_date")
+    list_filter = ("category", "capture_method")
+    raw_id_fields = ("file", "patient", "created_by", "updated_by")
+
+
+@admin.register(ArtCouple)
+class ArtCoupleAdmin(admin.ModelAdmin):
+    list_display = ("woman", "partner", "single_woman", "art_consent", "created_date")
+    raw_id_fields = ("woman", "partner", "facility", "created_by", "updated_by")
+
+
+@admin.register(RestrictedPatient)
+class RestrictedPatientAdmin(admin.ModelAdmin):
+    """The alias only; the patient's name would defeat the masking."""
+
+    list_display = ("alias", "created_date")
+    search_fields = ("alias",)
+    raw_id_fields = ("patient",)
+
+
+@admin.register(StatutoryFlag)
+class StatutoryFlagAdmin(admin.ModelAdmin):
+    list_display = ("patient_id", "category", "created_by", "created_date")
+    list_filter = ("category",)
+    raw_id_fields = ("patient", "encounter", "created_by", "updated_by")
+
+
+@admin.register(BreakGlassAccess)
+class BreakGlassAccessAdmin(admin.ModelAdmin):
+    """The audit trail: read-only."""
+
+    list_display = ("user", "patient_id", "reason", "created_date", "expires_at")
+    raw_id_fields = ("patient", "user")
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

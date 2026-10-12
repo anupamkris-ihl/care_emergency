@@ -2,25 +2,34 @@ import datetime
 
 from care.emr.api.viewsets.base import emr_exception_handler
 from care.emr.api.viewsets.encounter import EncounterViewSet
+from care.emr.api.viewsets.file_upload import file_authorizer
 from care.emr.api.viewsets.patient import PatientViewSet
 from care.emr.api.viewsets.scheduling.availability import SlotViewSet
+from care.emr.locks.billing import PatientCreateLock
 from care.emr.models import Encounter, Patient
+from care.emr.models.patient import PatientIdentifier
 from care.emr.models.scheduling.booking import TokenSlot
 from care.emr.models.scheduling.schedule import Availability
+from care.emr.resources.encounter.constants import COMPLETED_CHOICES
 from care.emr.resources.patient.spec import PatientRetrieveSpec
 from care.emr.resources.scheduling.slot.spec import TokenBookingReadSpec
 from care.facility.models import Facility
 from care.security.authorization import AuthorizationController
 from care.utils.shortcuts import get_object_or_404
 from care.utils.time_util import care_now
+from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 from django_filters import rest_framework as filters
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
 
 from care_emergency.constants import (
+    BREAK_GLASS_HOURS,
+    DOCUMENT_MIME_TYPES,
     REMINDER_LEAD_TIME_HOURS,
     TRIAGE_PRIORITY,
     BookingChannels,
@@ -28,18 +37,28 @@ from care_emergency.constants import (
 )
 from care_emergency.models import (
     AppointmentDetails,
+    ArtCouple,
+    BreakGlassAccess,
     EmergencyDesk,
     EmergencyEncounter,
     FacilityUnit,
+    PatientDocument,
     PatientRegistration,
     RegistrationAllergy,
+    RestrictedPatient,
+    StatutoryFlag,
     WalkInReserve,
 )
+from care_emergency.contact import is_desk_phone
+from care_emergency.restricted import can_see_identity, new_alias, restriction_of
 from care_emergency.serializers import (
     serialize_appointment,
     serialize_desk,
+    serialize_document,
     serialize_emergency,
     serialize_registration,
+    serialize_restricted_registration,
+    serialize_restriction,
     serialize_unit,
     serialize_walk_in_reserve,
 )
@@ -47,20 +66,29 @@ from care_emergency.services import (
     allocate_appointment_number,
     allocate_mlc_number,
     allocate_patient_number,
+    attach_documents,
     attach_patient_number,
     check_walk_in_reserve,
     default_visit_purpose,
     issue_patient_number,
+    missing_documents,
+    staged_documents,
+    store_document,
     unit_code,
 )
 from care_emergency.specs import (
     AppointmentBookSpec,
+    BreakGlassSpec,
     DeskRegisterSpec,
+    DeskContactSpec,
+    RegistrationSpec,
     DeskWriteSpec,
+    DocumentUploadSpec,
     EmergencyRegisterSpec,
     EmergencyUpdateSpec,
     MedicoLegalMixin,
     PatientNumberIssueSpec,
+    StatutoryFlagSpec,
     UnitWriteSpec,
     WalkInReserveWriteSpec,
 )
@@ -401,8 +429,9 @@ class ConvertView(EmergencyAPIView):
 
 
 class RegistrationView(EmergencyAPIView):
-    """Front-desk registration: creates the Care patient and its
-    PatientRegistration row in one transaction."""
+    """Front-desk registration: creates the Care patient, its
+    PatientRegistration row, an IVF partner and the desk documents in one
+    transaction."""
 
     def post(self, request):
         spec = DeskRegisterSpec.model_validate(request.data)
@@ -413,23 +442,48 @@ class RegistrationView(EmergencyAPIView):
             key: "" if value is None and key.endswith(("_number", "_phone")) else value
             for key, value in details.items()
         }
+        patient_body = dict(spec.patient)
+        if spec.registration.mobile_owner == "No phone":
+            if not can("can_register_patient_at_facility_obj", request.user, facility):
+                raise PermissionDenied("You do not have access to this facility")
+            desk = EmergencyDesk.objects.filter(facility=facility).first()
+            if desk is None:
+                raise ValidationError(
+                    "Set the emergency desk number for this facility first"
+                )
+            patient_body["phone_number"] = desk.phone_number
+        elif is_desk_phone(patient_body.get("phone_number")):
+            raise ValidationError("Select No phone instead of entering the desk number")
+        couple = spec.couple
+        partner = couple.partner if couple else None
+        if set(spec.documents) & set(partner.documents if partner else []):
+            raise ValidationError("A document can't belong to both partners")
 
         if facility:
             unit_code(facility)
 
         with transaction.atomic():
+            documents = staged_documents(request.user, spec.documents)
+            partner_documents = (
+                staged_documents(request.user, partner.documents) if partner else []
+            )
+            missing = missing_documents(
+                spec.registration, documents, couple, partner_documents
+            )
+            if missing:
+                err = f"Upload {', '.join(missing)}"
+                raise ValidationError(err)
+            series = (
+                PatientNumberSeries.pre_registration
+                if spec.pre_registration
+                else PatientNumberSeries.uhid
+            )
             patient_data = care_view(PatientViewSet, request, "create").handle_create(
-                spec.patient
+                patient_body
             )
             patient = Patient.objects.get(external_id=patient_data["id"])
             if facility:
-                issue_patient_number(
-                    patient,
-                    facility,
-                    PatientNumberSeries.pre_registration
-                    if spec.pre_registration
-                    else PatientNumberSeries.uhid,
-                )
+                issue_patient_number(patient, facility, series)
                 patient_data = PatientRetrieveSpec.serialize(patient).to_json()
             record = PatientRegistration.objects.create(
                 patient=patient,
@@ -443,9 +497,60 @@ class RegistrationView(EmergencyAPIView):
                 RegistrationAllergy(registration=record, **allergy.model_dump())
                 for allergy in spec.registration.allergies
             )
+            attach_documents(documents, patient)
+            if couple:
+                self.register_couple(
+                    request, spec, patient, facility, series, partner_documents
+                )
+            patient_data = PatientRetrieveSpec.serialize(patient).to_json()
 
         return Response(
             {"patient": patient_data, "registration": serialize_registration(record)}
+        )
+
+    def register_couple(self, request, spec, woman, facility, series, documents):
+        """The partner becomes his own Care patient, at the woman's address."""
+        couple = spec.couple
+        partner_patient = None
+        if couple.partner:
+            partner = couple.partner
+            # Care holds one patient-create lock until commit, so a second
+            # create in the same transaction would be refused. Its job is
+            # identifier uniqueness checks, and the partner has no
+            # staff-entered identifiers.
+            PatientCreateLock().release()
+            data = care_view(PatientViewSet, request, "create").handle_create(
+                {
+                    "name": partner.name,
+                    "gender": "male",
+                    "date_of_birth": partner.date_of_birth.isoformat(),
+                    "phone_number": partner.phone_number,
+                    "address": spec.patient.get("address"),
+                    "permanent_address": spec.patient.get("permanent_address"),
+                    "pincode": spec.patient.get("pincode"),
+                    "geo_organization": spec.patient.get("geo_organization"),
+                }
+            )
+            partner_patient = Patient.objects.get(external_id=data["id"])
+            if facility:
+                issue_patient_number(partner_patient, facility, series)
+            attach_documents(documents, partner_patient)
+        ArtCouple.objects.create(
+            woman=woman,
+            partner=partner_patient,
+            facility=facility,
+            single_woman=couple.single_woman,
+            art_consent=couple.art_consent,
+            partner_identity_card_type=couple.partner.identity_card_type
+            if couple.partner
+            else "",
+            partner_identity_number_last4=couple.partner.identity_number_last4
+            if couple.partner
+            else "",
+            partner_abha_number=couple.partner.abha_number if couple.partner else "",
+            partner_abha_address=couple.partner.abha_address if couple.partner else "",
+            created_by=request.user,
+            updated_by=request.user,
         )
 
 
@@ -460,7 +565,241 @@ class PatientRegistrationView(EmergencyAPIView):
             ),
             patient=patient,
         )
+        restriction = restriction_of(patient)
+        if restriction and not can_see_identity(request.user, patient):
+            return Response(serialize_restricted_registration(record, restriction))
         return Response(serialize_registration(record))
+
+
+class PatientNumberSearchView(EmergencyAPIView):
+    """Exact UHID lookup; return only patients the caller can view."""
+
+    def get(self, request):
+        value = request.query_params.get("uhid", "").strip().upper()
+        if not value or len(value) > 40:
+            raise ValidationError("Enter the full UHID")
+        ids = PatientIdentifier.objects.filter(
+            config__config__system="care_emergency/uhid", value=value
+        ).values("patient_id")
+        results = [
+            PatientRetrieveSpec.serialize(patient).to_json()
+            for patient in Patient.objects.filter(id__in=ids)
+            if can("can_view_patient_obj", request.user, patient)
+        ]
+        return Response({"count": len(results), "results": results})
+
+
+class PatientContactView(EmergencyAPIView):
+    """Replace a No phone fallback with a real contact, preserving identifiers."""
+
+    def patch(self, request, patient_id):
+        spec = DeskContactSpec.model_validate(request.data)
+        patient = get_object_or_404(Patient, external_id=patient_id)
+        if not can("can_write_patient_obj", request.user, patient):
+            raise PermissionDenied("Cannot update this patient")
+        restriction = restriction_of(patient)
+        if restriction and not can_see_identity(request.user, patient):
+            raise PermissionDenied("Identity access is required to update a contact")
+        if is_desk_phone(spec.phone_number):
+            raise ValidationError("Enter a real contact number, not the desk number")
+        with transaction.atomic():
+            record = get_object_or_404(
+                PatientRegistration.objects.select_for_update(), patient=patient
+            )
+            if record.mobile_owner != "No phone":
+                raise ValidationError("This patient already has a contact number")
+            registration = RegistrationSpec.model_construct(
+                **{
+                    **serialize_registration(record),
+                    "mobile_owner": spec.mobile_owner,
+                    "whatsapp_number": record.whatsapp_number or None,
+                    "alternate_phone_number": record.alternate_phone_number or None,
+                    "next_of_kin_phone": record.next_of_kin_phone or None,
+                }
+            )
+            # Apply contact validation without revalidating unrelated demographics.
+            validated = DeskRegisterSpec.model_construct(
+                facility=record.facility.external_id,
+                patient={"pincode": patient.pincode, "phone_number": spec.phone_number},
+                registration=registration,
+            )
+            try:
+                validated.validate_contact()
+            except ValueError as error:
+                raise ValidationError(str(error)) from error
+            if patient.age < 18 and spec.mobile_owner == "Self":
+                raise ValidationError(
+                    "A minor's mobile must belong to a parent, guardian or relative"
+                )
+            view = care_view(
+                PatientViewSet, request, "update", external_id=str(patient_id)
+            )
+            # Care's update spec clears PIN when omitted, even for a partial update.
+            view.handle_update(
+                patient, {"phone_number": spec.phone_number, "pincode": patient.pincode}
+            )
+            record.mobile_owner = spec.mobile_owner
+            record.updated_by = request.user
+            record.save(update_fields=["mobile_owner", "updated_by", "modified_date"])
+            patient.refresh_from_db()
+        return Response(PatientRetrieveSpec.serialize(patient).to_json())
+
+
+class DocumentView(EmergencyAPIView):
+    """Desk documents (D37, D43). POST is multipart: file, category, side,
+    capture_method and, for an existing patient, patient. Without a patient
+    the document is staged until a registration uses it."""
+
+    parser_classes = [MultiPartParser]
+
+    def get(self, request):
+        patient = get_object_or_404(
+            Patient, external_id=request.query_params.get("patient")
+        )
+        file_authorizer(request.user, "patient", str(patient.external_id), "read")
+        if restriction_of(patient) and not can_see_identity(request.user, patient):
+            raise PermissionDenied("This patient's documents are restricted")
+        documents = PatientDocument.objects.filter(patient=patient).select_related(
+            "file", "created_by"
+        )
+        return Response(
+            [serialize_document(x) for x in documents.order_by("-created_date")]
+        )
+
+    def post(self, request):
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError("Choose a file")
+        spec = DocumentUploadSpec.model_validate(
+            {key: request.data.get(key) for key in DocumentUploadSpec.model_fields}
+        )
+        if upload.size > settings.MAX_FILE_UPLOAD_SIZE * 1024 * 1024:
+            err = f"Files can be up to {settings.MAX_FILE_UPLOAD_SIZE} MB"
+            raise ValidationError(err)
+        if upload.content_type not in DOCUMENT_MIME_TYPES:
+            raise ValidationError("Upload a JPEG, PNG, WebP or PDF")
+        patient = None
+        if spec.patient:
+            patient = get_object_or_404(Patient, external_id=spec.patient)
+            file_authorizer(request.user, "patient", str(spec.patient), "write")
+        elif not AuthorizationController.call("can_create_patient", request.user):
+            raise PermissionDenied("You do not have permission to register patients")
+        document = store_document(
+            request.user,
+            upload,
+            spec.category,
+            spec.side,
+            spec.capture_method,
+            patient,
+        )
+        return Response(serialize_document(document))
+
+
+class StagedDocumentView(EmergencyAPIView):
+    def delete(self, request, document_id):
+        document = get_object_or_404(
+            PatientDocument,
+            external_id=document_id,
+            patient__isnull=True,
+            created_by=request.user,
+        )
+        file = document.file
+        document.delete()
+        file.files_manager.delete_object(file, quiet=True)
+        file.delete()
+        return Response(status=204)
+
+
+class RestrictionView(EmergencyAPIView):
+    """Statutory confidentiality (D30). GET tells anyone who can see the
+    patient whether they are restricted; the categories are shown only to
+    those who can see the identity."""
+
+    def get(self, request, patient_id):
+        patient = get_object_or_404(Patient, external_id=patient_id)
+        if not can("can_view_patient_obj", request.user, patient):
+            raise PermissionDenied("You do not have permission to view this patient")
+        restriction = restriction_of(patient)
+        visible = restriction is not None and can_see_identity(request.user, patient)
+        return Response(serialize_restriction(restriction, request.user, visible))
+
+
+class StatutoryFlagView(EmergencyAPIView):
+    """Raised by the treating clinician in an encounter: needs clinical write
+    access to it (doctors and nurses), which the front desk doesn't have."""
+
+    def get(self, request, patient_id):
+        patient = get_object_or_404(Patient, external_id=patient_id)
+        if not can("can_view_patient_obj", request.user, patient):
+            raise PermissionDenied("You do not have permission to view this patient")
+        encounters = (
+            Encounter.objects.filter(patient=patient)
+            .exclude(status__in=[*COMPLETED_CHOICES, "discharged"])
+            .select_related("facility", "patient")
+            .order_by("-created_date")
+        )
+        return Response(
+            [
+                {
+                    "id": str(encounter.external_id),
+                    "status": encounter.status,
+                    "encounter_class": encounter.encounter_class,
+                    "created_date": encounter.created_date,
+                }
+                for encounter in encounters
+                if can(
+                    "can_write_service_request_in_encounter", request.user, encounter
+                )
+            ][:20]
+        )
+
+    def post(self, request, patient_id):
+        spec = StatutoryFlagSpec.model_validate(request.data)
+        patient = get_object_or_404(Patient, external_id=patient_id)
+        encounter = get_object_or_404(
+            Encounter, external_id=spec.encounter, patient=patient
+        )
+        if not can("can_write_service_request_in_encounter", request.user, encounter):
+            raise PermissionDenied(
+                "Only the treating clinician can raise a statutory flag"
+            )
+        if encounter.status in [*COMPLETED_CHOICES, "discharged"]:
+            raise ValidationError("Statutory flags require an open encounter")
+        with transaction.atomic():
+            restriction = (
+                RestrictedPatient.objects.select_for_update()
+                .filter(patient=patient)
+                .first()
+            ) or RestrictedPatient.objects.create(patient=patient, alias=new_alias())
+            StatutoryFlag.objects.get_or_create(
+                patient=patient,
+                encounter=encounter,
+                category=spec.category,
+                defaults={"created_by": request.user, "updated_by": request.user},
+            )
+        return Response(serialize_restriction(restriction, request.user, visible=True))
+
+
+class BreakGlassView(EmergencyAPIView):
+    """Shows a restricted patient's identity to the user for an hour, with
+    the reason kept for audit. Anyone who can view the patient can do it;
+    every use is recorded."""
+
+    def post(self, request, patient_id):
+        spec = BreakGlassSpec.model_validate(request.data)
+        patient = get_object_or_404(Patient, external_id=patient_id)
+        if not can("can_view_patient_obj", request.user, patient):
+            raise PermissionDenied("You do not have permission to view this patient")
+        restriction = restriction_of(patient)
+        if restriction is None:
+            raise ValidationError("This patient is not restricted")
+        BreakGlassAccess.objects.create(
+            patient=patient,
+            user=request.user,
+            reason=spec.reason.strip(),
+            expires_at=timezone.now() + datetime.timedelta(hours=BREAK_GLASS_HOURS),
+        )
+        return Response(serialize_restriction(restriction, request.user, visible=True))
 
 
 class AppointmentFilters(filters.FilterSet):
@@ -550,6 +889,9 @@ class AppointmentViewSet(GenericViewSet):
                 or default_visit_purpose(slot, booking.patient),
                 booking_channel=spec.booking_channel,
                 reminder_due_at=reminder_due_at,
+                guidance_area=spec.guidance_area,
+                guidance_since=spec.guidance_since,
+                chief_complaint=spec.chief_complaint,
                 created_by=request.user,
                 updated_by=request.user,
             )
