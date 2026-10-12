@@ -1,7 +1,14 @@
+import datetime
+
 from care.emr.api.viewsets.base import emr_exception_handler
 from care.emr.api.viewsets.encounter import EncounterViewSet
 from care.emr.api.viewsets.patient import PatientViewSet
+from care.emr.api.viewsets.scheduling.availability import SlotViewSet
 from care.emr.models import Encounter, Patient
+from care.emr.models.scheduling.booking import TokenSlot
+from care.emr.models.scheduling.schedule import Availability
+from care.emr.resources.patient.spec import PatientRetrieveSpec
+from care.emr.resources.scheduling.slot.spec import TokenBookingReadSpec
 from care.facility.models import Facility
 from care.security.authorization import AuthorizationController
 from care.utils.shortcuts import get_object_or_404
@@ -13,15 +20,49 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
 
-from care_emergency.constants import TRIAGE_PRIORITY
-from care_emergency.models import EmergencyDesk, EmergencyEncounter
-from care_emergency.serializers import serialize_desk, serialize_emergency
-from care_emergency.services import allocate_mlc_number
+from care_emergency.constants import (
+    REMINDER_LEAD_TIME_HOURS,
+    TRIAGE_PRIORITY,
+    BookingChannels,
+    PatientNumberSeries,
+)
+from care_emergency.models import (
+    AppointmentDetails,
+    EmergencyDesk,
+    EmergencyEncounter,
+    FacilityUnit,
+    PatientRegistration,
+    RegistrationAllergy,
+    WalkInReserve,
+)
+from care_emergency.serializers import (
+    serialize_appointment,
+    serialize_desk,
+    serialize_emergency,
+    serialize_registration,
+    serialize_unit,
+    serialize_walk_in_reserve,
+)
+from care_emergency.services import (
+    allocate_appointment_number,
+    allocate_mlc_number,
+    allocate_patient_number,
+    attach_patient_number,
+    check_walk_in_reserve,
+    default_visit_purpose,
+    issue_patient_number,
+    unit_code,
+)
 from care_emergency.specs import (
+    AppointmentBookSpec,
+    DeskRegisterSpec,
     DeskWriteSpec,
     EmergencyRegisterSpec,
     EmergencyUpdateSpec,
     MedicoLegalMixin,
+    PatientNumberIssueSpec,
+    UnitWriteSpec,
+    WalkInReserveWriteSpec,
 )
 
 
@@ -41,6 +82,11 @@ def get_facility(external_id):
 
 def can(permission, user, obj):
     return AuthorizationController.call(permission, user, obj)
+
+
+def can_on_resource(permission, user, resource):
+    """Care's schedule and booking checks take the resource first."""
+    return AuthorizationController.call(permission, resource, user)
 
 
 class EmergencyAPIView(APIView):
@@ -76,6 +122,67 @@ class DeskView(EmergencyAPIView):
         return Response(serialize_desk(desk))
 
 
+class UnitView(EmergencyAPIView):
+    def get(self, request):
+        facility = get_facility(request.query_params.get("facility"))
+        if not (
+            can("can_create_encounter_obj", request.user, facility)
+            or can("can_update_facility_obj", request.user, facility)
+        ):
+            raise PermissionDenied("You do not have access to this facility")
+        unit = get_object_or_404(FacilityUnit, facility=facility)
+        return Response(serialize_unit(unit))
+
+    def put(self, request):
+        spec = UnitWriteSpec.model_validate(request.data)
+        facility = get_facility(spec.facility)
+        if not can("can_update_facility_obj", request.user, facility):
+            raise PermissionDenied("Only facility admins can set the unit code")
+        unit = FacilityUnit.objects.filter(facility=facility).first()
+        if unit and unit.code != spec.code:
+            # Issued numbers carry the code, so changing it would split the unit's series.
+            raise ValidationError("The unit code can't be changed once set")
+        if (
+            FacilityUnit.objects.filter(code=spec.code)
+            .exclude(facility=facility)
+            .exists()
+        ):
+            raise ValidationError("Another facility already uses this unit code")
+        if unit is None:
+            unit = FacilityUnit.objects.create(
+                facility=facility,
+                code=spec.code,
+                created_by=request.user,
+                updated_by=request.user,
+            )
+        return Response(serialize_unit(unit))
+
+
+class PatientNumberView(EmergencyAPIView):
+    """Issues the patient's UHID if they don't have one yet: on payment for a
+    pre-registration, or for a patient registered through Care's own form."""
+
+    def post(self, request, patient_id):
+        spec = PatientNumberIssueSpec.model_validate(request.data)
+        patient = get_object_or_404(Patient, external_id=patient_id)
+        if not can("can_write_patient_obj", request.user, patient):
+            raise PermissionDenied("You do not have permission to update this patient")
+        facility = get_facility(spec.facility)
+        if issue_number_blocked(patient):
+            raise ValidationError(
+                "Complete this emergency patient's registration to issue a UHID"
+            )
+        with transaction.atomic():
+            issue_patient_number(patient, facility)
+        return Response(PatientRetrieveSpec.serialize(patient).to_json())
+
+
+def issue_number_blocked(patient):
+    return EmergencyEncounter.objects.filter(
+        patient=patient, converted_at__isnull=True, is_unidentified=True
+    ).exists()
+
+
 class RegisterView(EmergencyAPIView):
     """Creates the patient, the emergency encounter and the emergency record
     in one transaction, so a failure never leaves an orphan patient."""
@@ -91,11 +198,27 @@ class RegisterView(EmergencyAPIView):
                 "Set the emergency desk number for this facility first"
             )
 
+        unit_code(facility)
+
         with transaction.atomic():
+            patient_body = {**spec.patient, "phone_number": desk.phone_number}
+            unknown_number = None
+            if spec.is_unidentified:
+                # Staff see unidentified patients as "Unknown <n>", n being the
+                # day's sequence in UNK-<unit>-<yyyymmdd>-<nnn>.
+                unknown_number, sequence = allocate_patient_number(
+                    PatientNumberSeries.unknown, facility
+                )
+                patient_body["name"] = f"Unknown {sequence}"
             patient_data = care_view(PatientViewSet, request, "create").handle_create(
-                {**spec.patient, "phone_number": desk.phone_number}
+                patient_body
             )
             patient = Patient.objects.get(external_id=patient_data["id"])
+            if unknown_number:
+                # Before the encounter, so arrival doesn't issue a UHID.
+                attach_patient_number(
+                    patient, PatientNumberSeries.unknown, unknown_number
+                )
             encounter_data = care_view(
                 EncounterViewSet, request, "create"
             ).handle_create(
@@ -131,6 +254,8 @@ class RegisterView(EmergencyAPIView):
             if spec.is_medico_legal:
                 record.mlc_number = allocate_mlc_number(facility)
             record.save()
+            patient.refresh_from_db()
+            patient_data = PatientRetrieveSpec.serialize(patient).to_json()
 
         return Response(
             {
@@ -250,12 +375,18 @@ class ConvertView(EmergencyAPIView):
                 raise ValidationError(
                     "Use the patient's own number, not the emergency desk number"
                 )
+            facility = records.order_by("-created_date").first().facility
+            unit_code(facility)
             records.update(
                 converted_at=care_now(),
                 converted_by=request.user,
                 is_unidentified=False,
                 updated_by=request.user,
             )
+            # The UNK number stays on the record alongside the new UHID.
+            issue_patient_number(patient, facility)
+            patient.refresh_from_db()
+            patient_data = PatientRetrieveSpec.serialize(patient).to_json()
         return Response(
             {
                 "patient": patient_data,
@@ -267,3 +398,202 @@ class ConvertView(EmergencyAPIView):
                 ],
             }
         )
+
+
+class RegistrationView(EmergencyAPIView):
+    """Front-desk registration: creates the Care patient and its
+    PatientRegistration row in one transaction."""
+
+    def post(self, request):
+        spec = DeskRegisterSpec.model_validate(request.data)
+        facility = get_facility(spec.facility) if spec.facility else None
+        details = spec.registration.model_dump(exclude={"allergies"})
+        # Phone numbers are optional; the columns keep "" for none.
+        details = {
+            key: "" if value is None and key.endswith(("_number", "_phone")) else value
+            for key, value in details.items()
+        }
+
+        if facility:
+            unit_code(facility)
+
+        with transaction.atomic():
+            patient_data = care_view(PatientViewSet, request, "create").handle_create(
+                spec.patient
+            )
+            patient = Patient.objects.get(external_id=patient_data["id"])
+            if facility:
+                issue_patient_number(
+                    patient,
+                    facility,
+                    PatientNumberSeries.pre_registration
+                    if spec.pre_registration
+                    else PatientNumberSeries.uhid,
+                )
+                patient_data = PatientRetrieveSpec.serialize(patient).to_json()
+            record = PatientRegistration.objects.create(
+                patient=patient,
+                facility=facility,
+                vip_flagged_by=request.user if spec.registration.is_vip else None,
+                created_by=request.user,
+                updated_by=request.user,
+                **details,
+            )
+            RegistrationAllergy.objects.bulk_create(
+                RegistrationAllergy(registration=record, **allergy.model_dump())
+                for allergy in spec.registration.allergies
+            )
+
+        return Response(
+            {"patient": patient_data, "registration": serialize_registration(record)}
+        )
+
+
+class PatientRegistrationView(EmergencyAPIView):
+    def get(self, request, patient_id):
+        patient = get_object_or_404(Patient, external_id=patient_id)
+        if not can("can_view_patient_obj", request.user, patient):
+            raise PermissionDenied("You do not have permission to view this patient")
+        record = get_object_or_404(
+            PatientRegistration.objects.select_related(
+                "patient", "facility", "vip_flagged_by", "created_by"
+            ),
+            patient=patient,
+        )
+        return Response(serialize_registration(record))
+
+
+class AppointmentFilters(filters.FilterSet):
+    patient = filters.UUIDFilter(field_name="booking__patient__external_id")
+    appointment_number = filters.CharFilter(
+        field_name="appointment_number", lookup_expr="iexact"
+    )
+    date = filters.DateFilter(field_name="booking__token_slot__start_datetime__date")
+    booking_channel = filters.CharFilter(field_name="booking_channel")
+
+
+class AppointmentViewSet(GenericViewSet):
+    """Books through Care's own slot booking and adds the desk details in the
+    same transaction. Looked up by the Care booking id."""
+
+    lookup_field = "booking__external_id"
+    lookup_url_kwarg = "booking_id"
+    filter_backends = [filters.DjangoFilterBackend]
+    filterset_class = AppointmentFilters
+
+    def get_exception_handler(self):
+        return emr_exception_handler
+
+    def get_queryset(self):
+        qs = AppointmentDetails.objects.select_related(
+            "booking", "booking__token_slot__resource", "facility", "created_by"
+        ).order_by("-created_date")
+        if self.action == "list":
+            facility = get_facility(self.request.query_params.get("facility"))
+            if not can("can_list_booking_on_facility", self.request.user, facility):
+                raise PermissionDenied("You do not have permission to view bookings")
+            return qs.filter(facility=facility)
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        page = self.paginate_queryset(self.filter_queryset(self.get_queryset()))
+        return self.get_paginated_response([serialize_appointment(x) for x in page])
+
+    def retrieve(self, request, *args, **kwargs):
+        details = self.get_object()
+        booking = details.booking
+        if not (
+            can_on_resource(
+                "can_list_booking", request.user, booking.token_slot.resource
+            )
+            or can("can_view_patient_obj", request.user, booking.patient)
+        ):
+            raise PermissionDenied("You do not have permission to view this booking")
+        return Response(serialize_appointment(details))
+
+    def create(self, request, *args, **kwargs):
+        spec = AppointmentBookSpec.model_validate(request.data)
+        slot = get_object_or_404(
+            TokenSlot.objects.select_related(
+                "resource__facility", "availability__schedule__resource"
+            ),
+            external_id=spec.slot,
+        )
+        if not can_on_resource("can_create_booking", request.user, slot.resource):
+            raise PermissionDenied("You do not have permission to create appointments")
+
+        with transaction.atomic():
+            # Locks the slot so allocated is current when Care checks capacity.
+            slot = TokenSlot.objects.select_for_update().get(pk=slot.pk)
+            check_walk_in_reserve(slot, spec.booking_channel)
+            booking = SlotViewSet.create_appointment_handler(
+                slot,
+                {
+                    "patient": str(spec.patient),
+                    "note": spec.note,
+                    "tags": [str(x) for x in spec.tags],
+                },
+                request.user,
+            )
+            reminder_due_at = None
+            if spec.booking_channel == BookingChannels.phone:
+                due = slot.start_datetime - datetime.timedelta(
+                    hours=REMINDER_LEAD_TIME_HOURS
+                )
+                reminder_due_at = due if due > care_now() else None
+            details = AppointmentDetails.objects.create(
+                booking=booking,
+                facility=slot.resource.facility,
+                appointment_number=allocate_appointment_number(),
+                consultation_type=spec.consultation_type,
+                visit_purpose=spec.visit_purpose
+                or default_visit_purpose(slot, booking.patient),
+                booking_channel=spec.booking_channel,
+                reminder_due_at=reminder_due_at,
+                created_by=request.user,
+                updated_by=request.user,
+            )
+
+        return Response(
+            {
+                "booking": TokenBookingReadSpec.serialize(booking).to_json(),
+                "details": serialize_appointment(details),
+            }
+        )
+
+
+class WalkInReserveView(EmergencyAPIView):
+    def get_availability(self, external_id, permission):
+        availability = get_object_or_404(
+            Availability.objects.select_related("schedule__resource__facility"),
+            external_id=external_id,
+        )
+        if not can_on_resource(
+            permission, self.request.user, availability.schedule.resource
+        ):
+            raise PermissionDenied("You do not have access to this schedule")
+        return availability
+
+    def get(self, request):
+        availability = self.get_availability(
+            request.query_params.get("availability"), "can_list_schedule"
+        )
+        reserve = get_object_or_404(WalkInReserve, availability=availability)
+        return Response(serialize_walk_in_reserve(reserve))
+
+    def put(self, request):
+        spec = WalkInReserveWriteSpec.model_validate(request.data)
+        availability = self.get_availability(spec.availability, "can_write_schedule")
+        if spec.walk_in_every is None:
+            WalkInReserve.objects.filter(availability=availability).delete()
+            return Response(status=204)
+        reserve, _ = WalkInReserve.objects.update_or_create(
+            availability=availability,
+            defaults={"walk_in_every": spec.walk_in_every, "updated_by": request.user},
+            create_defaults={
+                "walk_in_every": spec.walk_in_every,
+                "created_by": request.user,
+                "updated_by": request.user,
+            },
+        )
+        return Response(serialize_walk_in_reserve(reserve))

@@ -4,7 +4,7 @@ from care.utils.tests.base import CareAPITestBase
 from django.urls import reverse
 from rest_framework import status
 
-from care_emergency.models import EmergencyDesk, EmergencyEncounter
+from care_emergency.models import EmergencyDesk, EmergencyEncounter, FacilityUnit
 
 DESK_NUMBER = "+919876543210"
 REAL_NUMBER = "+919812345678"
@@ -16,6 +16,7 @@ class EmergencyAPITests(CareAPITestBase):
         super().setUp()
         self.user = self.create_super_user()
         self.facility = self.create_facility(user=self.user)
+        FacilityUnit.objects.create(facility=self.facility, code="LN")
         self.client.force_authenticate(user=self.user)
         PatientCreateLock().release()
 
