@@ -856,3 +856,113 @@ class DeskContactSpec(BaseModel):
             self.mobile_owner
         )
         return self
+
+
+def allowed_titles(gender, minor):
+    """Titles that fit the patient's gender and age (same rules as the desk)."""
+    titles = {"Mx"}
+    if gender == "male":
+        titles.add("Master" if minor else "Mr")
+    elif gender == "female":
+        titles.add("Ms")
+        if not minor:
+            titles.add("Mrs")
+    if not minor:
+        titles.add("Dr")
+    return titles
+
+
+class QuickRegisterSpec(BaseModel):
+    """Quick Register: what the desk takes on a phone call to block a slot."""
+
+    facility: UUID4
+    title: str
+    first_name: str
+    last_name: str = ""
+    date_of_birth: datetime.date
+    gender: str
+    phone_number: PhoneNumber = Field(max_length=14)
+    consultation_type: ConsultationTypes
+    department: UUID4 | None = None
+    doctor: UUID4 | None = None
+    whatsapp_same_as_mobile: bool = True
+    send_form_link: bool = True
+    send_payment_reminder: bool = True
+
+    @model_validator(mode="after")
+    def validate_patient(self):
+        self.first_name = " ".join(self.first_name.split())
+        self.last_name = " ".join(self.last_name.split())
+        one_of(TITLES, blank=False)(self.title)
+        one_of(["male", "female", "non_binary", "transgender"], blank=False)(
+            self.gender
+        )
+        if not re.fullmatch(NAME_PART, self.first_name):
+            raise ValueError("The first name must be 2-40 letters with single spaces")
+        if self.last_name and not re.fullmatch(
+            r"(?=.{1,40}\Z)[A-Za-z]+( [A-Za-z]+)*", self.last_name
+        ):
+            raise ValueError("The last name can only have letters and single spaces")
+        today = timezone.localdate()
+        if not datetime.date(1900, 1, 1) <= self.date_of_birth <= today:
+            raise ValueError("Date of birth must be between 1900 and today")
+        age = years_old(self.date_of_birth, today)
+        if age > 120:  # noqa: PLR2004
+            raise ValueError("Age must be between 0 and 120")
+        if self.title not in allowed_titles(self.gender, age < 18):  # noqa: PLR2004
+            raise ValueError("The title does not match the patient's gender and age")
+        if not (self.department or self.doctor):
+            raise ValueError("Choose a department or a doctor")
+        return self
+
+
+class QuickFormSpec(BaseModel):
+    """What the patient fills in from the texted registration link. Kept
+    as-is for the desk, who checks it and completes the registration."""
+
+    email: str = Field(default="", max_length=254)
+    whatsapp_number: PhoneNumber | None = Field(default=None, max_length=14)
+    alternate_phone_number: PhoneNumber | None = Field(default=None, max_length=14)
+    house: str = Field(min_length=1, max_length=100)
+    street: str = Field(default="", max_length=150)
+    locality: str = Field(default="", max_length=100)
+    city: str = Field(default="", max_length=100)
+    district: str = Field(default="", max_length=100)
+    state: str = Field(default="", max_length=100)
+    pincode: str = Field(pattern=r"^[1-9]\d{5}$")
+    marital_status: str = ""
+    preferred_language: str
+    next_of_kin_name: str = ""
+    next_of_kin_relationship: str = Field(default="", max_length=30)
+    next_of_kin_phone: PhoneNumber | None = Field(default=None, max_length=14)
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_text(cls, data):
+        if isinstance(data, dict):
+            return {
+                key: " ".join(value.split()) if isinstance(value, str) else value
+                for key, value in data.items()
+            }
+        return data
+
+    @model_validator(mode="after")
+    def validate_details(self):
+        one_of(MARITAL_STATUSES)(self.marital_status)
+        one_of(LANGUAGES, blank=False)(self.preferred_language)
+        if self.email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]{2,}", self.email):
+            raise ValueError("Enter a valid email address")
+        if self.next_of_kin_name and not re.fullmatch(NAME_PART, self.next_of_kin_name):
+            raise ValueError(
+                "The next of kin's name must be 2-40 letters with single spaces"
+            )
+        if (self.next_of_kin_relationship or self.next_of_kin_phone) and not (
+            self.next_of_kin_name
+        ):
+            raise ValueError("Enter the next of kin's name")
+        problem = address_problem(
+            self.pincode, self.locality, self.district, self.state
+        )
+        if problem:
+            raise ValueError(problem)
+        return self

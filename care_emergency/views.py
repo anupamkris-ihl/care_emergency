@@ -1,5 +1,6 @@
 import datetime
 import re
+import secrets
 
 from care.emr.api.viewsets.base import emr_exception_handler
 from care.emr.api.viewsets.encounter import EncounterViewSet
@@ -7,7 +8,8 @@ from care.emr.api.viewsets.file_upload import file_authorizer
 from care.emr.api.viewsets.patient import PatientViewSet
 from care.emr.api.viewsets.scheduling.availability import SlotViewSet
 from care.emr.locks.billing import PatientCreateLock
-from care.emr.models import Encounter, Patient
+from care.emr.models import Encounter, FacilityOrganization, Patient
+from care.emr.models.organization import FacilityOrganizationUser
 from care.emr.models.patient import PatientIdentifier
 from care.emr.models.scheduling.booking import TokenSlot
 from care.emr.models.scheduling.schedule import Availability
@@ -16,7 +18,9 @@ from care.emr.resources.patient.spec import PatientRetrieveSpec
 from care.emr.resources.scheduling.slot.spec import TokenBookingReadSpec
 from care.facility.models import Facility
 from care.security.authorization import AuthorizationController
+from care.users.models import User
 from care.utils.shortcuts import get_object_or_404
+from care.utils.sms import send_text_message
 from care.utils.time_util import care_now
 from django.conf import settings
 from django.db import transaction
@@ -26,11 +30,13 @@ from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
 
 from care_emergency.constants import (
     BREAK_GLASS_HOURS,
+    QUICK_FORM_LINK_DAYS,
     DOCUMENT_MIME_TYPES,
     REMINDER_LEAD_TIME_HOURS,
     TRIAGE_PRIORITY,
@@ -47,6 +53,7 @@ from care_emergency.models import (
     PatientDocument,
     PatientRegistration,
     PostOffice,
+    QuickRegistration,
     RegistrationAllergy,
     RestrictedPatient,
     StatutoryFlag,
@@ -54,12 +61,14 @@ from care_emergency.models import (
 )
 from care_emergency.contact import is_desk_phone
 from care_emergency.pincodes import lookup as lookup_pincode
+from care_emergency.pincodes import plug_setting
 from care_emergency.restricted import can_see_identity, new_alias, restriction_of
 from care_emergency.serializers import (
     serialize_appointment,
     serialize_desk,
     serialize_document,
     serialize_emergency,
+    serialize_quick_registration,
     serialize_registration,
     serialize_restricted_registration,
     serialize_restriction,
@@ -92,6 +101,8 @@ from care_emergency.specs import (
     EmergencyUpdateSpec,
     MedicoLegalMixin,
     PatientNumberIssueSpec,
+    QuickFormSpec,
+    QuickRegisterSpec,
     StatutoryFlagSpec,
     UnitWriteSpec,
     WalkInReserveWriteSpec,
@@ -575,6 +586,239 @@ class PatientRegistrationView(EmergencyAPIView):
         return Response(serialize_registration(record))
 
 
+def quick_form_link(record):
+    base = plug_setting("REGISTRATION_FORM_BASE_URL") or settings.CURRENT_DOMAIN
+    return f"{base.rstrip('/')}/register/complete/{record.form_token}"
+
+
+def send_quick_form_link(record_id):
+    """Texts the patient the full registration form. Runs after commit, so a
+    rolled-back registration never sends a link."""
+    record = QuickRegistration.objects.select_related("patient", "facility").get(
+        id=record_id
+    )
+    sent = send_text_message(
+        content=(
+            f"{record.facility.name}: Hi {record.first_name}, please complete "
+            f"your registration before your visit: {quick_form_link(record)} "
+            f"(valid for {QUICK_FORM_LINK_DAYS} days)"
+        ),
+        recipients=record.patient.phone_number,
+        fail_silently=True,
+    )
+    if sent:
+        QuickRegistration.objects.filter(id=record.id).update(
+            form_link_sent_at=timezone.now()
+        )
+    return bool(sent)
+
+
+class QuickRegistrationView(EmergencyAPIView):
+    """Quick Register (phone booking): creates the Care patient with a PRE-
+    reference and the QuickRegistration row that marks how they were
+    registered, then texts the full registration form if asked."""
+
+    @classmethod
+    def as_view(cls, **initkwargs):
+        # Commits before responding, so the response says whether the link
+        # was actually texted (it is sent once the patient is saved).
+        return transaction.non_atomic_requests(super().as_view(**initkwargs))
+
+    def post(self, request):
+        spec = QuickRegisterSpec.model_validate(request.data)
+        facility = get_facility(spec.facility)
+        if not can("can_register_patient_at_facility_obj", request.user, facility):
+            raise PermissionDenied("You do not have access to this facility")
+        if is_desk_phone(spec.phone_number):
+            raise ValidationError("Enter the patient's own mobile number")
+        department = None
+        if spec.department:
+            department = get_object_or_404(
+                FacilityOrganization,
+                external_id=spec.department,
+                facility=facility,
+                org_type="dept",
+            )
+        doctor = None
+        if spec.doctor:
+            doctor = get_object_or_404(User, external_id=spec.doctor)
+            if not FacilityOrganizationUser.objects.filter(
+                user=doctor, organization__facility=facility
+            ).exists():
+                raise ValidationError("The doctor does not work at this facility")
+        unit_code(facility)
+
+        with transaction.atomic():
+            patient_data = care_view(PatientViewSet, request, "create").handle_create(
+                {
+                    "name": f"{spec.first_name} {spec.last_name}".strip(),
+                    "gender": spec.gender,
+                    "phone_number": spec.phone_number,
+                    "date_of_birth": spec.date_of_birth.isoformat(),
+                }
+            )
+            patient = Patient.objects.get(external_id=patient_data["id"])
+            issue_patient_number(
+                patient, facility, PatientNumberSeries.pre_registration
+            )
+            record = QuickRegistration.objects.create(
+                patient=patient,
+                facility=facility,
+                title=spec.title,
+                first_name=spec.first_name,
+                last_name=spec.last_name,
+                consultation_type=spec.consultation_type,
+                department=department,
+                doctor=doctor,
+                whatsapp_same_as_mobile=spec.whatsapp_same_as_mobile,
+                send_form_link=spec.send_form_link,
+                send_payment_reminder=spec.send_payment_reminder,
+                form_token=secrets.token_urlsafe(32),
+                form_expires_at=timezone.now()
+                + datetime.timedelta(days=QUICK_FORM_LINK_DAYS),
+                created_by=request.user,
+                updated_by=request.user,
+            )
+            if spec.send_form_link:
+                transaction.on_commit(lambda: send_quick_form_link(record.id))
+            patient_data = PatientRetrieveSpec.serialize(patient).to_json()
+        record.refresh_from_db()
+
+        return Response(
+            {
+                "patient": patient_data,
+                "quick_registration": serialize_quick_registration(record),
+            }
+        )
+
+
+class PatientQuickRegistrationView(EmergencyAPIView):
+    def get_record(self, request, patient_id):
+        patient = get_object_or_404(Patient, external_id=patient_id)
+        if not can("can_view_patient_obj", request.user, patient):
+            raise PermissionDenied("You do not have permission to view this patient")
+        return get_object_or_404(
+            QuickRegistration.objects.select_related(
+                "patient", "facility", "department", "doctor", "created_by"
+            ),
+            patient=patient,
+        )
+
+    def get(self, request, patient_id):
+        return Response(
+            serialize_quick_registration(self.get_record(request, patient_id))
+        )
+
+
+class QuickFormLinkView(PatientQuickRegistrationView):
+    """Texts the registration form again (a failed SMS, a lost message) and
+    keeps the link open for another QUICK_FORM_LINK_DAYS."""
+
+    http_method_names = ["post"]
+
+    @classmethod
+    def as_view(cls, **initkwargs):
+        return transaction.non_atomic_requests(super().as_view(**initkwargs))
+
+    def post(self, request, patient_id):
+        record = self.get_record(request, patient_id)
+        if record.form_submitted_at:
+            raise ValidationError("The patient has already submitted the form")
+        if is_desk_phone(record.patient.phone_number):
+            raise ValidationError("The patient has no mobile number to text")
+        record.send_form_link = True
+        record.form_expires_at = timezone.now() + datetime.timedelta(
+            days=QUICK_FORM_LINK_DAYS
+        )
+        record.updated_by = request.user
+        record.save(
+            update_fields=[
+                "send_form_link",
+                "form_expires_at",
+                "updated_by",
+                "modified_date",
+            ]
+        )
+        if not send_quick_form_link(record.id):
+            raise ValidationError("The message couldn't be sent. Try again later")
+        record.refresh_from_db()
+        return Response(serialize_quick_registration(record))
+
+
+class QuickFormThrottle(AnonRateThrottle):
+    rate = "30/min"
+
+
+class QuickFormView(EmergencyAPIView):
+    """The texted registration form. Open to the patient without a login: the
+    unguessable token is the credential, it expires, and it takes one answer."""
+
+    authentication_classes = []
+    permission_classes = []
+    throttle_classes = [QuickFormThrottle]
+
+    def get_record(self, token, *, lock=False):
+        records = QuickRegistration.objects.select_related("patient", "facility")
+        if lock:
+            records = records.select_for_update()
+        return get_object_or_404(records, form_token=token)
+
+    def get(self, request, token):
+        record = self.get_record(token)
+        if record.form_submitted_at:
+            state = "submitted"
+        elif record.form_expires_at <= timezone.now():
+            state = "expired"
+        else:
+            state = "open"
+        phone = record.patient.phone_number or ""
+        return Response(
+            {
+                "status": state,
+                "first_name": record.first_name,
+                "facility_name": record.facility.name,
+                "phone_last4": phone[-4:],
+                "whatsapp_same_as_mobile": record.whatsapp_same_as_mobile,
+                "expires_at": record.form_expires_at,
+            }
+        )
+
+    def post(self, request, token):
+        spec = QuickFormSpec.model_validate(request.data)
+        with transaction.atomic():
+            record = self.get_record(token, lock=True)
+            if record.form_submitted_at:
+                raise ValidationError("This form has already been submitted")
+            if record.form_expires_at <= timezone.now():
+                raise ValidationError(
+                    "This link has expired. Please call the hospital for a new one"
+                )
+            phone = record.patient.phone_number
+            if spec.alternate_phone_number and spec.alternate_phone_number == phone:
+                raise ValidationError(
+                    "The alternate mobile must differ from the main number"
+                )
+            details = spec.model_dump(mode="json")
+            if record.whatsapp_same_as_mobile:
+                details["whatsapp_number"] = phone
+            record.form_details = details
+            record.form_submitted_at = timezone.now()
+            record.save(update_fields=["form_details", "form_submitted_at"])
+        return Response({"status": "submitted"})
+
+
+class QuickFormPincodeView(QuickFormView):
+    """The PIN lookup for the texted form, open only to a live link."""
+
+    http_method_names = ["get"]
+
+    def get(self, request, token, pincode):
+        record = self.get_record(token)
+        if record.form_submitted_at or record.form_expires_at <= timezone.now():
+            raise PermissionDenied("This link is no longer open")
+        return pincode_response(pincode)
+
+
 class PatientNumberSearchView(EmergencyAPIView):
     """Exact UHID lookup; return only patients the caller can view."""
 
@@ -952,24 +1196,26 @@ class WalkInReserveView(EmergencyAPIView):
         return Response(serialize_walk_in_reserve(reserve))
 
 
+def pincode_response(pincode):
+    if not re.fullmatch(r"[1-9]\d{5}", pincode):
+        raise ValidationError("Enter a 6-digit PIN code.")
+    place = lookup_pincode(pincode)
+    if place is None:
+        loaded = PostOffice.objects.exists()
+        detail = (
+            "PIN code not found." if loaded else "The PIN directory hasn't been loaded."
+        )
+        return Response(
+            {"detail": detail, "directory_loaded": loaded},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return Response(place)
+
+
 class PincodeView(EmergencyAPIView):
     """India Post's district, state and post offices for a PIN (D17, M01).
     404 when the PIN isn't listed or the directory isn't loaded yet; callers
     fall back to a live lookup either way."""
 
     def get(self, request, pincode):
-        if not re.fullmatch(r"[1-9]\d{5}", pincode):
-            raise ValidationError("Enter a 6-digit PIN code.")
-        place = lookup_pincode(pincode)
-        if place is None:
-            loaded = PostOffice.objects.exists()
-            detail = (
-                "PIN code not found."
-                if loaded
-                else "The PIN directory hasn't been loaded."
-            )
-            return Response(
-                {"detail": detail, "directory_loaded": loaded},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        return Response(place)
+        return pincode_response(pincode)

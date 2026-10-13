@@ -423,3 +423,46 @@ class PostOffice(models.Model):
 
     def __str__(self):
         return f"{self.pincode} {self.name}"
+
+
+class QuickRegistration(EMRBaseModel):
+    """Marks a patient registered by phone through Quick Register, with what
+    the desk took on the call. The rest of the registration form is texted to
+    the patient as a one-time link; their answers wait in form_details until
+    the desk completes the registration."""
+
+    patient = models.OneToOneField(
+        "emr.Patient", on_delete=models.PROTECT, related_name="quick_registration"
+    )
+    facility = models.ForeignKey(
+        "facility.Facility", on_delete=models.PROTECT, related_name="+"
+    )
+    title = models.CharField(max_length=10)
+    first_name = models.CharField(max_length=40)
+    last_name = models.CharField(max_length=40, blank=True, default="")
+    consultation_type = models.CharField(
+        max_length=20, choices=ConsultationTypes.choices
+    )
+    department = models.ForeignKey(
+        "emr.FacilityOrganization",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    doctor = models.ForeignKey(
+        "users.User",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    whatsapp_same_as_mobile = models.BooleanField(default=True)
+    send_form_link = models.BooleanField(default=True)
+    send_payment_reminder = models.BooleanField(default=True)
+
+    form_token = models.CharField(max_length=64, unique=True)
+    form_expires_at = models.DateTimeField()
+    form_link_sent_at = models.DateTimeField(null=True, blank=True)
+    form_submitted_at = models.DateTimeField(null=True, blank=True)
+    form_details = models.JSONField(default=dict, blank=True)

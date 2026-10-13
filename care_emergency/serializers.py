@@ -270,3 +270,37 @@ def serialize_walk_in_reserve(reserve):
         "walk_in_every": reserve.walk_in_every,
         "modified_date": reserve.modified_date,
     }
+
+
+def serialize_quick_registration(record):
+    doctor = record.doctor
+    return {
+        "id": str(record.external_id),
+        "patient": str(record.patient.external_id),
+        "facility": str(record.facility.external_id),
+        "title": record.title,
+        "first_name": record.first_name,
+        "last_name": record.last_name,
+        "consultation_type": record.consultation_type,
+        "department": {
+            "id": str(record.department.external_id),
+            "name": record.department.name,
+        }
+        if record.department
+        else None,
+        "doctor": {
+            "id": str(doctor.external_id),
+            "name": doctor.get_full_name() or doctor.username,
+        }
+        if doctor
+        else None,
+        "whatsapp_same_as_mobile": record.whatsapp_same_as_mobile,
+        "send_form_link": record.send_form_link,
+        "send_payment_reminder": record.send_payment_reminder,
+        "form_expires_at": record.form_expires_at,
+        "form_link_sent_at": record.form_link_sent_at,
+        "form_submitted_at": record.form_submitted_at,
+        "form_details": record.form_details,
+        "created_date": record.created_date,
+        "created_by": record.created_by.username if record.created_by else None,
+    }

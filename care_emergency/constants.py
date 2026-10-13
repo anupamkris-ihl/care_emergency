@@ -329,3 +329,6 @@ class StatutoryCategories(models.TextChoices):
 # PT- + 6 characters without the look-alikes 0, O, 1 and I.
 ALIAS_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 BREAK_GLASS_HOURS = 1
+
+# Quick registration (phone booking): how long the full-form link stays open.
+QUICK_FORM_LINK_DAYS = 7
