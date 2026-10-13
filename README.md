@@ -22,6 +22,7 @@ Mounted by Care at `/api/care_emergency/`.
 | `GET` / `PUT` | `unit/` | Read (`?facility=<id>`) or set `{facility, code}`, the unit code printed in patient numbers (`LN`, 2–4 capitals). Facility admins only; can't be changed once set. |
 | `POST` | `patients/<patient_id>/uhid/` | Issue the patient's UHID if they have none: `{facility}`. Refused for unidentified emergency patients until they are converted. |
 | `GET` / `PUT` | `walk-in-reserve/` | Read (`?availability=<id>`) or set `{availability, walk_in_every}` for an availability. `walk_in_every: null` removes it. Needs schedule write access. |
+| `GET` | `pincode/<pin>/` | India Post's `{country, state, district, localities}` for a PIN, from the plug's directory. 404 if it isn't listed or the directory isn't loaded (`directory_loaded` says which). |
 
 `register/` body:
 
@@ -87,6 +88,27 @@ Care's `TokenBooking` only stores the patient, note and tags, and a plug can't e
 - **Walk-in reserve (D49):** with `walk_in_every: 4`, one seat in four of that availability's seats each day (slots × tokens per slot, excluding availability exceptions) is held back. Scheduled bookings past that cap are refused, and walk-ins can still take the held seats. The cap only applies to bookings made through this endpoint. Care's own `create_appointment` and slot stats don't know about it.
 - **Phone-booking reminder (D51):** phone bookings get `reminder_due_at`, set 2 hours before the slot. The `send_appointment_reminders` Celery task runs every 5 minutes. It sends an SMS through Care's SMS backend to the patient's phone for bookings that are still `booked`, and records `reminder_sent_at`.
 
+## PIN directory
+
+India Post's PIN directory (D17, M01) is kept in `PostOffice`: one row per post office, with the office name (the locality, its `B.O`/`S.O` suffix removed), district and state. The source is the Department of Posts' "All India Pincode Directory" on data.gov.in.
+
+- **With a key:** set `DATA_GOV_IN_API_KEY` (an env var on backend and celery, or in the plug's `configs`). Get one by signing up at data.gov.in and copying the key from *My Account*. The `refresh_pincode_directory` Celery task reloads the directory from the data.gov.in API at 03:00 on the 5th of every month. Run `python manage.py load_pincode_directory` to load it the first time.
+- **Without a key:** the task logs that it was skipped. The directory can still be loaded from the CSV download with `python manage.py load_pincode_directory --file <csv>`.
+- Each load replaces the whole table in one transaction. A download that fails or stops before the API's `total` keeps the old directory.
+- hmis_fe asks `pincode/<pin>/` first. On any error, including an unloaded directory or a PIN added after the last refresh, it falls back to a live lookup at api.postalpincode.in.
+
+## Billing
+
+`python manage.py setup_billing [--facility <id>]` seeds Care's billing masters from the POH 2026-27 tariff (front-desk v11 `billing.md`). It runs for every facility with a unit code if no facility is given. Re-running updates in place.
+
+- **Tariff:** root category `poh-tariff`, heads H1–H7 and WARD (SAC in the description), and the item catalogue in `billing.py` as charge item definitions with slugs `poh-<code>`. Per-doctor consultation fees aren't seeded.
+- **Payer tariff:** saving a registration tags the patient (*Billing payer*). Corporate gets 15% off list (×0.85), Govt scheme 40% (×0.6), staff 50% (×0.5) and International, INT and NRI a 90% surcharge (×1.9). Insurance and self-pay pay list.
+- **Concessions:** staff self get a further 50% (consultation free, other heads 25% of list), dependants 50% on every head. A self-pay patient's chosen senior, freedom fighter or veteran concession adds 15%, 25% or 10%. Care's discounts don't compound, so all are expressed as a share of list.
+- **Discount codes:** coupons, discretionary amounts and percentages, and 100% entitlements are added to the facility's discount codes, keeping any codes already there.
+- **Invoice numbers:** `INV/<unit>/<yy>/<count:05d>`. Care's `invoice_count` is all-time, so the sequence doesn't restart each year.
+
+Care can't split a bill between patient and payer, cap or expire coupons, or require approval for discounts; those need a bill screen.
+
 ## Local development
 
 Care's `docker-compose.local.yaml` mounts this checkout at `/plugs/care_emergency` and adds it to `PYTHONPATH`. `plug_config.py` registers the app.
@@ -95,6 +117,8 @@ Care's `docker-compose.local.yaml` mounts this checkout at `/plugs/care_emergenc
 docker exec care-backend-1 python manage.py migrate care_emergency
 docker exec care-backend-1 python manage.py test care_emergency --keepdb
 docker exec care-backend-1 python manage.py issue_patient_numbers --default-facility <id>
+docker exec care-backend-1 python manage.py setup_billing
+docker exec care-backend-1 python manage.py load_pincode_directory  # needs DATA_GOV_IN_API_KEY, or --file <csv>
 ```
 
 ## Deploying to a Care instance
@@ -114,4 +138,4 @@ ADDITIONAL_PLUGS=$PLUGS
 python manage.py migrate care_emergency
 ```
 
-Alternatively, add the plug to `plug_config.py` in a Care fork. That covers both build and runtime, with no env var. Pin `version` to a tag (for example `@v0.3.0`) rather than `@main` for production.
+Alternatively, add the plug to `plug_config.py` in a Care fork. That covers both build and runtime, with no env var. Pin `version` to a tag (for example `@v0.4.0`) rather than `@main` for production.

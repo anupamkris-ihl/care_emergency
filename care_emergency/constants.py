@@ -85,6 +85,54 @@ PAYER_TYPES = [
     "Staff",
     "International",
 ]
+RELIGIONS = [
+    "Hindu",
+    "Muslim",
+    "Christian",
+    "Sikh",
+    "Buddhist",
+    "Jain",
+    "Parsi",
+    "Jewish",
+    "Other",
+    "Prefer not to say",
+]
+# v12.1 M06: the 22 Eighth Schedule languages, English and foreign languages.
+EIGHTH_SCHEDULE_LANGUAGES = [
+    "Assamese",
+    "Bengali",
+    "Bodo",
+    "Dogri",
+    "Gujarati",
+    "Hindi",
+    "Kannada",
+    "Kashmiri",
+    "Konkani",
+    "Maithili",
+    "Malayalam",
+    "Manipuri",
+    "Marathi",
+    "Nepali",
+    "Odia",
+    "Punjabi",
+    "Sanskrit",
+    "Santali",
+    "Sindhi",
+    "Tamil",
+    "Telugu",
+    "Urdu",
+]
+FOREIGN_LANGUAGES = [
+    "Arabic",
+    "Dari",
+    "French",
+    "Pashto",
+    "Russian",
+    "Swahili",
+    "Uzbek",
+    "Other",
+]
+LANGUAGES = ["English", *EIGHTH_SCHEDULE_LANGUAGES, *FOREIGN_LANGUAGES]
 CONSENT_GIVERS = ["The patient", "Spouse", "Parent", "Guardian", "Next of kin"]
 CONSENT_METHODS = ["Signature", "Scanned form", "Thumb impression"]
 COMMUNICATION_CHANNELS = ["WhatsApp", "SMS", "Phone call", "Email"]

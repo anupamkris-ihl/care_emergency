@@ -391,3 +391,19 @@ class BreakGlassAccess(models.Model):
 
     def __str__(self):
         return f"{self.user_id} → {self.patient_id} until {self.expires_at}"
+
+
+class PostOffice(models.Model):
+    """One row of India Post's PIN directory (D17, M01). The whole table is
+    replaced on each load, so loaded_at is when the directory was refreshed."""
+
+    pincode = models.CharField(max_length=6, db_index=True)
+    name = models.CharField(max_length=100)
+    office_type = models.CharField(max_length=10, blank=True, default="")
+    delivery = models.BooleanField(default=True)
+    district = models.CharField(max_length=100)
+    state = models.CharField(max_length=100)
+    loaded_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"{self.pincode} {self.name}"

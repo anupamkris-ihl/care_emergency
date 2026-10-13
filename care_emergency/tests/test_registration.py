@@ -14,6 +14,7 @@ from care_emergency.models import (
     EmergencyDesk,
     PatientDocument,
     PatientRegistration,
+    PostOffice,
 )
 
 PHONE = "+919812345678"
@@ -206,6 +207,23 @@ class DeskRegistrationTests(CareAPITestBase):
             {str(record.patient.external_id)},
         )
 
+    def test_any_eighth_schedule_language_is_accepted(self):
+        # v12.1 D11 / M06: languages and religions come from the masters.
+        response = self.register(
+            self.body(preferred_language="Santali", consent_language="Santali")
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(PatientRegistration.objects.get().preferred_language, "Santali")
+
+    def test_language_outside_the_master_is_rejected(self):
+        self.assert_rejected(self.body(preferred_language="Klingon"), "'Klingon'")
+
+    def test_consent_language_outside_the_master_is_rejected(self):
+        self.assert_rejected(self.body(consent_language="Klingon"), "'Klingon'")
+
+    def test_religion_outside_the_master_is_rejected(self):
+        self.assert_rejected(self.body(religion="Jedi"), "'Jedi'")
+
     def test_non_self_payer_needs_both_sides_of_the_card(self):
         corporate = {
             "registration_type": "CORP",
@@ -327,6 +345,10 @@ class DeskRegistrationTests(CareAPITestBase):
                 self.couple_body(partner={"documents": []}),
                 "the partner's government ID",
             ),
+            (
+                self.couple_body(partner={"identity_number_last4": "2345"}),
+                "partner's ID number's format",
+            ),
         ]
         for body, message in cases:
             with self.subTest(message=message):
@@ -408,6 +430,35 @@ class DeskRegistrationTests(CareAPITestBase):
             },
         )
 
+    def test_address_must_match_a_listed_pin(self):
+        PostOffice.objects.create(
+            pincode="110024",
+            name="Lajpat Nagar III",
+            district="South East Delhi",
+            state="Delhi",
+            loaded_at=timezone.now(),
+        )
+        for registration, message in (
+            ({"locality": ""}, "Choose the PIN's post office"),
+            ({"locality": "Connaught Place"}, "not under this PIN"),
+            ({"district": "New Delhi"}, "do not match the PIN"),
+        ):
+            with self.subTest(registration=registration):
+                self.assert_rejected(self.body(**registration), message)
+        body = self.body(locality=" lajpat nagar  iii", state="DELHI")
+        self.assertEqual(self.register(body).status_code, status.HTTP_200_OK)
+
+    def test_unlisted_pin_is_typed_by_hand(self):
+        PostOffice.objects.create(
+            pincode="400001",
+            name="Fort",
+            district="Mumbai",
+            state="Maharashtra",
+            loaded_at=timezone.now(),
+        )
+        body = self.body(locality="", district="Anywhere")
+        self.assertEqual(self.register(body).status_code, status.HTTP_200_OK)
+
     def test_pin_and_mobile_rules_cannot_be_bypassed(self):
         for pin in (None, 0, 11002, 1100245, "010024", True, "abc123"):
             with self.subTest(pin=pin):
@@ -442,6 +493,33 @@ class DeskRegistrationTests(CareAPITestBase):
         ):
             with self.subTest(registration=registration):
                 self.assert_rejected(self.child_body(**registration), message)
+
+    def test_id_number_formats_cannot_be_bypassed(self):
+        for card_type, bad in (
+            ("aadhaar", "774A"),
+            ("pan", "2345"),
+            ("voter_id", "ABC7"),
+            ("driving_license", "DL01"),
+            ("passport", "456A"),
+        ):
+            with self.subTest(card_type=card_type):
+                self.assert_rejected(
+                    self.body(identity_card_type=card_type, identity_number_last4=bad),
+                    "ID number's format",
+                )
+        nri = {
+            "registration_type": "NRI",
+            "nationality_category": "NRI",
+            "nationality": "UAE",
+            "address_in_india": "Hotel Pacific, Saket",
+        }
+        for passport in ("GBR5521104", "12345678", "AB123456"):
+            with self.subTest(passport=passport):
+                self.assert_rejected(
+                    self.body(**nri, passport_number=passport), "Indian passport"
+                )
+        response = self.register(self.body(**nri, passport_number="Z1234567"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
 
     def test_policy_holder_rules_cannot_be_bypassed(self):
         corporate = {

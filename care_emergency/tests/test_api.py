@@ -2,6 +2,7 @@ from care.emr.locks.billing import PatientCreateLock
 from care.emr.models import Encounter, Patient
 from care.utils.tests.base import CareAPITestBase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 
 from care_emergency.models import EmergencyDesk, EmergencyEncounter, FacilityUnit
@@ -95,10 +96,20 @@ class EmergencyAPITests(CareAPITestBase):
         response = self.register(mlc_nature="", police_station="")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_age_zero_is_rejected(self):
+    def test_age_zero_is_accepted(self):
         self.set_desk()
         response = self.register(
             patient={"name": "Unknown Female", "gender": "female", "age": 0}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        patient = Patient.objects.get()
+        self.assertLessEqual(patient.date_of_birth, timezone.localdate())
+        self.assertTrue(patient.meta["date_of_birth_approximate"])
+
+    def test_age_over_120_is_rejected(self):
+        self.set_desk()
+        response = self.register(
+            patient={"name": "Unknown Female", "gender": "female", "age": 121}
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(Patient.objects.exists())

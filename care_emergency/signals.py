@@ -3,7 +3,8 @@ from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
 from care_emergency.constants import CONSULTATION_ENCOUNTER_CLASS, PatientNumberSeries
-from care_emergency.models import AppointmentDetails, FacilityUnit
+from care_emergency.billing import sync_billing_tags
+from care_emergency.models import AppointmentDetails, FacilityUnit, PatientRegistration
 from care_emergency.services import issue_patient_number, patient_number
 
 
@@ -39,3 +40,12 @@ def issue_uhid_on_arrival(sender, instance, created, **kwargs):
     if patient_number(patient, PatientNumberSeries.unknown):
         return
     issue_patient_number(patient, instance.facility)
+
+
+@receiver(
+    post_save, sender=PatientRegistration, dispatch_uid="care_emergency_billing_tags"
+)
+def tag_payer_for_billing(sender, instance, **kwargs):
+    """Keeps the patient's payer and concession tags in step with the desk
+    registration, so Care prices their charge items at the right tariff."""
+    sync_billing_tags(instance)

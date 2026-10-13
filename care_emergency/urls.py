@@ -12,6 +12,7 @@ from care_emergency.views import (
     PatientNumberSearchView,
     PatientContactView,
     PatientRegistrationView,
+    PincodeView,
     RegisterView,
     RegistrationView,
     RestrictionView,
@@ -55,6 +56,7 @@ urlpatterns = [
         PatientRegistrationView.as_view(),
         name="desk-registration-detail",
     ),
+    path("pincode/<str:pincode>/", PincodeView.as_view(), name="pincode"),
     path("walk-in-reserve/", WalkInReserveView.as_view(), name="walk-in-reserve"),
     path("documents/", DocumentView.as_view(), name="desk-documents"),
     path(

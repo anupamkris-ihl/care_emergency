@@ -12,6 +12,7 @@ from care.emr.models import (
 from care.utils.tests.base import CareAPITestBase
 from django.urls import reverse
 from django.utils import timezone
+from freezegun import freeze_time
 from rest_framework import status
 
 from care_emergency.models import AppointmentDetails, WalkInReserve, EmergencyDesk
@@ -197,8 +198,11 @@ class AppointmentTests(CareAPITestBase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("only be made for today", str(response.data))
 
-        today_slot = self.create_slot(timezone.now() + datetime.timedelta(minutes=30))
-        response = self.book(slot=today_slot, booking_channel="walk_in")
+        # Midday, so "30 minutes from now" is still today whenever the suite runs.
+        noon = timezone.localtime().replace(hour=12, minute=0, second=0, microsecond=0)
+        with freeze_time(noon):
+            today_slot = self.create_slot(noon + datetime.timedelta(minutes=30))
+            response = self.book(slot=today_slot, booking_channel="walk_in")
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
 
     def test_walk_in_reserve_holds_seats_back(self):

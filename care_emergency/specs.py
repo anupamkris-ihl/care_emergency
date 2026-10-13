@@ -23,6 +23,7 @@ from care_emergency.constants import (
     GUIDANCE_SINCE,
     IDENTITY_CARD_TYPES,
     INTERNATIONAL_TYPES,
+    LANGUAGES,
     MARITAL_STATUSES,
     MLC_NATURES,
     MOBILE_OWNERS,
@@ -31,6 +32,7 @@ from care_emergency.constants import (
     PREGNANCY_STATUSES,
     PROMOTION_PURPOSES,
     REGISTRATION_TYPES,
+    RELIGIONS,
     TITLES,
     UNIT_CODE_PATTERN,
     VISA_TYPES,
@@ -43,6 +45,7 @@ from care_emergency.constants import (
     TriageChoices,
     VisitPurposes,
 )
+from care_emergency.pincodes import address_problem
 
 
 class BroughtBySpec(BaseModel):
@@ -100,14 +103,12 @@ class EmergencyRegisterSpec(MedicoLegalMixin, BaseModel):
 
     @model_validator(mode="after")
     def validate_age(self):
-        # Care raises a 500 for age=0 without a date of birth
-        # (PatientCreateSpec.perform_extra_deserialization), so require an
-        # estimate of at least 1 year.
+        # v12.1 D05: an estimated age is 0-120, matching Care's patient spec.
         age = self.patient.get("age")
         if self.patient.get("date_of_birth"):
             return self
-        if not isinstance(age, int) or isinstance(age, bool) or not 1 <= age <= 130:  # noqa: PLR2004
-            raise ValueError("Enter an estimated age between 1 and 130")
+        if not isinstance(age, int) or isinstance(age, bool) or not 0 <= age <= 120:  # noqa: PLR2004
+            raise ValueError("Enter an estimated age between 0 and 120")
         return self
 
 
@@ -124,6 +125,28 @@ NAME_PART = r"(?=.{2,40}\Z)[A-Za-z]+( [A-Za-z]+)*"
 FULL_NAME = r"[A-Za-z]+( [A-Za-z]+)*"
 PAYER_ID = r"[A-Z0-9/-]{1,24}"
 ABHA_ADDRESS = r"[a-z0-9._]{4,}@(abdm|sbx)"
+# Only the last 4 characters of a government ID are kept, so the server checks
+# them against the tail of each format: Aadhaar 12 digits, PAN ABCDE1234F,
+# EPIC ABC1234567, driving licence DL0120110012345, Indian passport A1234567.
+ID_TAILS = {
+    "aadhaar": r"\d{4}",
+    "pan": r"\d{3}[A-Z]",
+    "voter_id": r"\d{4}",
+    "driving_license": r"\d{4}",
+    "passport": r"\d{4}",
+}
+INDIAN_PASSPORT = r"[A-Z]\d{7}"
+# Indian citizens: their passport (and its tail) must be in the Indian format.
+INDIAN_PASSPORT_HOLDERS = ("Indian resident", "NRI")
+
+
+def validate_id_tail(card_type, last4, *, indian=True, whose="ID"):
+    tail = ID_TAILS.get(card_type)
+    if card_type == "passport" and not indian:
+        tail = None
+    if last4 and tail and not re.fullmatch(tail, last4):
+        err = f"The last 4 characters do not fit the {whose} number's format"
+        raise ValueError(err)
 
 
 def one_of(choices, *, blank=True):
@@ -152,6 +175,10 @@ REGISTRATION_CHOICES = {
     "registration_type": (REGISTRATION_TYPES, False),
     "title": (TITLES, False),
     "marital_status": (MARITAL_STATUSES, True),
+    "religion": (RELIGIONS, True),
+    "preferred_language": (LANGUAGES, False),
+    "interpreter_language": (LANGUAGES, True),
+    "consent_language": (LANGUAGES, False),
     "guardian_relationship": (GUARDIAN_RELATIONSHIPS, True),
     "mobile_owner": (MOBILE_OWNERS, False),
     "nationality_category": (NATIONALITY_CATEGORIES, False),
@@ -317,6 +344,10 @@ class RegistrationSpec(BaseModel):
             raise ValueError("The nationality does not match the registration type")
         if self.identity_number_last4 and not self.identity_card_type:
             raise ValueError("Choose the government ID type")
+        indian = self.nationality_category in INDIAN_PASSPORT_HOLDERS
+        validate_id_tail(
+            self.identity_card_type, self.identity_number_last4, indian=indian
+        )
         if (
             self.identity_card_type or self.abha_number or self.abha_address
         ) and not self.identity_storage_consent:
@@ -332,6 +363,12 @@ class RegistrationSpec(BaseModel):
                 self.address_in_india
             ):
                 raise ValueError("Enter the address in India")
+        if (
+            indian
+            and self.passport_number
+            and not re.fullmatch(INDIAN_PASSPORT, self.passport_number)
+        ):
+            raise ValueError("An Indian passport number looks like A1234567")
         if self.nationality_category == "Foreign":
             if not self.passport_expiry or not self.visa_type or not self.frro_c_form:
                 raise ValueError(
@@ -419,6 +456,9 @@ class PartnerSpec(BaseModel):
                     "The partner's names must be 2-40 letters with single spaces"
                 )
         one_of(IDENTITY_CARD_TYPES, blank=False)(self.identity_card_type)
+        validate_id_tail(
+            self.identity_card_type, self.identity_number_last4, whose="partner's ID"
+        )
         if self.abha_address and not re.fullmatch(ABHA_ADDRESS, self.abha_address):
             raise ValueError("The partner's ABHA address must look like name@abdm")
         return self
@@ -629,6 +669,15 @@ class DeskRegisterSpec(BaseModel):
             isinstance(pin, bool) or not re.fullmatch(r"[1-9]\d{5}", str(pin))
         ):
             raise ValueError("PIN must be 6 digits and start with 1-9")
+        if domestic and (
+            problem := address_problem(
+                str(pin),
+                registration.locality,
+                registration.district,
+                registration.state,
+            )
+        ):
+            raise ValueError(problem)
         for label, phone in (
             ("main mobile", self.patient.get("phone_number")),
             ("WhatsApp mobile", registration.whatsapp_number),

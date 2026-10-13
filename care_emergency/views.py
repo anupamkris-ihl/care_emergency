@@ -1,4 +1,5 @@
 import datetime
+import re
 
 from care.emr.api.viewsets.base import emr_exception_handler
 from care.emr.api.viewsets.encounter import EncounterViewSet
@@ -21,6 +22,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from django_filters import rest_framework as filters
+from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
@@ -44,12 +46,14 @@ from care_emergency.models import (
     FacilityUnit,
     PatientDocument,
     PatientRegistration,
+    PostOffice,
     RegistrationAllergy,
     RestrictedPatient,
     StatutoryFlag,
     WalkInReserve,
 )
 from care_emergency.contact import is_desk_phone
+from care_emergency.pincodes import lookup as lookup_pincode
 from care_emergency.restricted import can_see_identity, new_alias, restriction_of
 from care_emergency.serializers import (
     serialize_appointment,
@@ -939,3 +943,26 @@ class WalkInReserveView(EmergencyAPIView):
             },
         )
         return Response(serialize_walk_in_reserve(reserve))
+
+
+class PincodeView(EmergencyAPIView):
+    """India Post's district, state and post offices for a PIN (D17, M01).
+    404 when the PIN isn't listed or the directory isn't loaded yet; callers
+    fall back to a live lookup either way."""
+
+    def get(self, request, pincode):
+        if not re.fullmatch(r"[1-9]\d{5}", pincode):
+            raise ValidationError("Enter a 6-digit PIN code.")
+        place = lookup_pincode(pincode)
+        if place is None:
+            loaded = PostOffice.objects.exists()
+            detail = (
+                "PIN code not found."
+                if loaded
+                else "The PIN directory hasn't been loaded."
+            )
+            return Response(
+                {"detail": detail, "directory_loaded": loaded},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(place)
