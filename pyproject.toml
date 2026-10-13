@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "care_emergency"
-version = "0.6.0"
+version = "0.7.0"
 description = "Emergency and front-desk registration, appointments and patient numbers (UHID) for Care"
 requires-python = ">=3.13"
 readme = "README.md"

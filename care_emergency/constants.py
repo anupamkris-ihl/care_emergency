@@ -100,6 +100,10 @@ STAFF_CATEGORIES = [
     "Support staff",
     "Other",
 ]
+# Staff payer names: the employee themselves, or a family member they cover.
+STAFF_SELF = "POH staff — self"
+STAFF_DEPENDANT = "POH staff — dependant"
+STAFF_PAYERS = [STAFF_SELF, STAFF_DEPENDANT]
 PAYER_TYPES = [
     "Self",
     "Corporate",

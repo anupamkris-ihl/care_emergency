@@ -82,6 +82,8 @@ REGISTRATION_FIELDS = [
     "permanent_district",
     "permanent_state",
     "permanent_pincode",
+    "permanent_country",
+    "next_of_kin_title",
     "next_of_kin_name",
     "next_of_kin_relationship",
     "next_of_kin_phone",

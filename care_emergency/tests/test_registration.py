@@ -207,6 +207,98 @@ class DeskRegistrationTests(CareAPITestBase):
             {str(record.patient.external_id)},
         )
 
+    def test_nri_and_oci_need_their_passport_not_a_passport_id(self):
+        nri = {
+            "registration_type": "NRI",
+            "nationality_category": "NRI",
+            "nationality": "India",
+            "passport_number": "Z1234567",
+            "address_in_india": "C-22, Ring Road, Lajpat Nagar III",
+            "permanent_house": "14 Baker Street",
+            "permanent_city": "London",
+            "permanent_country": "United Kingdom",
+            "permanent_pincode": "NW1 6XE",
+        }
+        oci = {
+            "registration_type": "INT",
+            "nationality_category": "OCI-PIO",
+            "nationality": "USA",
+            "passport_number": "A12345678",
+            "identity_card_type": "oci_card",
+            "identity_number_last4": "4410",
+            "address_in_india": "Hotel Pacific, Saket",
+            "whatsapp_number": None,
+            "payer_type": "International",
+        }
+        self.assert_rejected(
+            self.body(**{**oci, "passport_number": ""}),
+            "Enter the nationality and passport number",
+        )
+        # The government ID stays the Aadhaar; the passport has its own field.
+        response = self.register(self.body(**nri))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        record = PatientRegistration.objects.get()
+        self.assertEqual(record.identity_card_type, "aadhaar")
+        self.assertEqual(record.passport_number, "Z1234567")
+        self.assertEqual(record.permanent_country, "United Kingdom")
+        self.assertEqual(record.permanent_pincode, "NW1 6XE")
+        PatientCreateLock().release()
+        response = self.register(
+            self.body(
+                patient={
+                    "name": "Maya Iyer",
+                    "phone_number": "+14155550134",
+                    "pincode": None,
+                },
+                **oci,
+            )
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+    def test_next_of_kin_title_and_staff_payer_names(self):
+        for registration, message in (
+            ({"next_of_kin_title": "Mrs"}, "next of kin's name with their title"),
+            (
+                {"next_of_kin_title": "Sir", "next_of_kin_name": "Ravi Sharma"},
+                "'Sir' is not one of",
+            ),
+            (
+                {
+                    "registration_type": "STAFF",
+                    "payer_type": "Staff",
+                    "payer_name": "POH staff",
+                    "employee_id": "POH-1182",
+                },
+                "'POH staff' is not one of",
+            ),
+            ({"permanent_pincode": "012345"}, "permanent PIN must be 6 digits"),
+            (
+                {"permanent_country": "Nepal", "permanent_pincode": "-"},
+                "permanent address's postal code",
+            ),
+        ):
+            with self.subTest(registration=registration):
+                self.assert_rejected(self.body(**registration), message)
+        dependant = {
+            "registration_type": "STAFF",
+            "payer_type": "Staff",
+            "payer_name": "POH staff — dependant",
+            "staff_category": "Doctor",
+            "employee_id": "POH-1182",
+            "policy_holder_relationship": "Spouse",
+            "next_of_kin_title": "Dr",
+            "next_of_kin_name": "Ravi Sharma",
+            "next_of_kin_relationship": "Spouse",
+        }
+        front = stage_document(self.user, "payer_card", "front")
+        back = stage_document(self.user, "payer_card", "back")
+        response = self.register(self.body(documents=[front, back], **dependant))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data["registration"]["next_of_kin_title"], "Dr")
+        self.assertEqual(
+            PatientRegistration.objects.get().payer_name, "POH staff — dependant"
+        )
+
     def test_any_eighth_schedule_language_is_accepted(self):
         # v12.1 D11 / M06: languages and religions come from the masters.
         response = self.register(

@@ -35,6 +35,8 @@ from care_emergency.constants import (
     REGISTRATION_TYPES,
     RELIGIONS,
     STAFF_CATEGORIES,
+    STAFF_DEPENDANT,
+    STAFF_PAYERS,
     TITLES,
     UNIT_CODE_PATTERN,
     VISA_TYPES,
@@ -183,6 +185,7 @@ REGISTRATION_CHOICES = {
     "consent_language": (LANGUAGES, False),
     "guardian_relationship": (GUARDIAN_RELATIONSHIPS, True),
     "mobile_owner": (MOBILE_OWNERS, False),
+    "next_of_kin_title": (TITLES, True),
     "whatsapp_owner": (PHONE_OWNERS, True),
     "nationality_category": (NATIONALITY_CATEGORIES, False),
     "identity_card_type": (IDENTITY_CARD_TYPES, True),
@@ -234,7 +237,11 @@ class RegistrationSpec(BaseModel):
     permanent_city: str = Field(default="", max_length=100)
     permanent_district: str = Field(default="", max_length=100)
     permanent_state: str = Field(default="", max_length=100)
-    permanent_pincode: str = Field(default="", pattern=r"^(?:[1-9]\d{5})?$")
+    # An Indian PIN unless permanent_country is another country (an NRI's
+    # home abroad), when it is that country's postal code.
+    permanent_pincode: str = Field(default="", pattern=r"^[A-Z0-9 -]{0,12}$")
+    permanent_country: str = Field(default="", max_length=60)
+    next_of_kin_title: str = ""
     next_of_kin_name: str = ""
     next_of_kin_relationship: str = Field(default="", max_length=30)
     next_of_kin_phone: PhoneNumber | None = Field(default=None, max_length=16)
@@ -303,6 +310,10 @@ class RegistrationSpec(BaseModel):
     promotions_consent: bool = False
     promotion_purposes: list[str] = []
 
+    @property
+    def permanent_abroad(self):
+        return self.permanent_country not in ("", "India")
+
     @model_validator(mode="before")
     @classmethod
     def strip_text(cls, data):
@@ -336,6 +347,17 @@ class RegistrationSpec(BaseModel):
             raise ValueError("Enter the WhatsApp number its owner belongs to")
         if self.staff_category and self.payer_type != "Staff":
             raise ValueError("The staff category is only for staff payers")
+        if self.next_of_kin_title and not self.next_of_kin_name:
+            raise ValueError("Enter the next of kin's name with their title")
+        if self.permanent_abroad:
+            if self.permanent_pincode and not re.fullmatch(
+                r"[A-Z0-9][A-Z0-9 -]{1,10}[A-Z0-9]", self.permanent_pincode
+            ):
+                raise ValueError("Enter the permanent address's postal code")
+        elif self.permanent_pincode and not re.fullmatch(
+            r"[1-9]\d{5}", self.permanent_pincode
+        ):
+            raise ValueError("The permanent PIN must be 6 digits and start with 1-9")
         return self
 
     @model_validator(mode="after")
@@ -435,6 +457,8 @@ class RegistrationSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_payer(self):
+        if self.payer_type == "Staff":
+            one_of(STAFF_PAYERS, blank=False)(self.payer_name)
         needs_id = self.payer_type in ("Corporate", "Staff")
         needs_policy = self.payer_type in ("Insurance/TPA", "Govt scheme")
         if self.payer_type not in ("Self", "International") and not self.payer_name:
@@ -706,8 +730,8 @@ class DeskRegisterSpec(BaseModel):
         ):
             raise ValueError(problem)
         if (
-            domestic
-            and registration.permanent_pincode
+            registration.permanent_pincode
+            and not registration.permanent_abroad
             and (
                 problem := address_problem(
                     registration.permanent_pincode,
@@ -734,7 +758,7 @@ class DeskRegisterSpec(BaseModel):
     def validate_policy_holder(self, age, minor):
         registration = self.registration
         staff = registration.payer_type == "Staff"
-        dependant = staff and registration.payer_name == "POH staff — dependant"
+        dependant = staff and registration.payer_name == STAFF_DEPENDANT
         if minor and staff and not dependant:
             raise ValueError("A minor can only be a staff dependant, never staff self")
         needs_holder = (
