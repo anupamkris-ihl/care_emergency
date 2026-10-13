@@ -9,9 +9,11 @@ from care_emergency.constants import (
     ABHA_STATUSES,
     ALLERGY_SEVERITIES,
     ALLERGY_STATUSES,
+    ARRIVAL_MODES,
     ART_MAN_AGES,
     ART_WOMAN_AGES,
     ASSISTANCE_NEEDS,
+    CHIEF_COMPLAINTS,
     COMMUNICATION_CHANNELS,
     CONSENT_GIVERS,
     CONSENT_METHODS,
@@ -52,10 +54,32 @@ from care_emergency.constants import (
 from care_emergency.pincodes import address_problem
 
 
+def one_of(choices, *, blank=True):
+    """A validator that accepts only values from choices ("" too when blank)."""
+
+    def check(value):
+        if value == "" and blank:
+            return value
+        if value not in choices:
+            err = f"'{value}' is not one of: {', '.join(choices)}"
+            raise ValueError(err)
+        return value
+
+    return check
+
+
 class BroughtBySpec(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+    # Who brought the patient in, or where from ("108 ambulance from NH-44").
+    # The quick registration screen can send only the attendant's contact.
+    name: str = Field(default="", max_length=200)
     phone_number: PhoneNumber | None = Field(default=None, max_length=14)
     relationship: str = Field(default="", max_length=50)
+
+    @model_validator(mode="after")
+    def validate_name_or_phone(self):
+        if not self.name.strip() and not self.phone_number:
+            raise ValueError("Enter who brought the patient in or their phone number")
+        return self
 
 
 class DeskWriteSpec(BaseModel):
@@ -88,12 +112,24 @@ class EmergencyRegisterSpec(MedicoLegalMixin, BaseModel):
     patient: dict
     organizations: list[UUID4] = []
     triage: TriageChoices
-    is_medico_legal: bool
+    is_medico_legal: bool = False
     mlc_nature: str = ""
     police_station: str = Field(default="", max_length=200)
     distinguishing_marks: str = Field(default="", max_length=500)
+    chief_complaint: str = ""
+    mode_of_arrival: str = ""
     is_unidentified: bool = True
     brought_by: BroughtBySpec | None = None
+
+    _chief_complaint = field_validator("chief_complaint")(one_of(CHIEF_COMPLAINTS))
+    _mode_of_arrival = field_validator("mode_of_arrival")(one_of(ARRIVAL_MODES))
+
+    @model_validator(mode="after")
+    def validate_chief_complaint(self):
+        # v11 §7.1: quick registration needs one; an unknown patient doesn't.
+        if not self.is_unidentified and not self.chief_complaint:
+            raise ValueError("Select the chief complaint")
+        return self
 
     @model_validator(mode="after")
     def validate_medico_legal(self):
@@ -122,7 +158,19 @@ class EmergencyUpdateSpec(BaseModel):
     mlc_nature: str | None = None
     police_station: str | None = Field(default=None, max_length=200)
     distinguishing_marks: str | None = Field(default=None, max_length=500)
+    chief_complaint: str | None = None
+    mode_of_arrival: str | None = None
     brought_by: BroughtBySpec | None = None
+
+    @field_validator("chief_complaint")
+    @classmethod
+    def validate_chief_complaint(cls, value):
+        return value if value is None else one_of(CHIEF_COMPLAINTS)(value)
+
+    @field_validator("mode_of_arrival")
+    @classmethod
+    def validate_mode_of_arrival(cls, value):
+        return value if value is None else one_of(ARRIVAL_MODES)(value)
 
 
 NAME_PART = r"(?=.{2,40}\Z)[A-Za-z]+( [A-Za-z]+)*"
@@ -151,20 +199,6 @@ def validate_id_tail(card_type, last4, *, indian=True, whose="ID"):
     if last4 and tail and not re.fullmatch(tail, last4):
         err = f"The last 4 characters do not fit the {whose} number's format"
         raise ValueError(err)
-
-
-def one_of(choices, *, blank=True):
-    """A validator that accepts only values from choices ("" too when blank)."""
-
-    def check(value):
-        if value == "" and blank:
-            return value
-        if value not in choices:
-            err = f"'{value}' is not one of: {', '.join(choices)}"
-            raise ValueError(err)
-        return value
-
-    return check
 
 
 class AllergySpec(BaseModel):

@@ -30,12 +30,19 @@ class EmergencyEncounterAdmin(admin.ModelAdmin):
     list_display = (
         "mlc_number",
         "triage",
+        "chief_complaint",
         "is_medico_legal",
         "is_unidentified",
         "facility",
         "created_date",
     )
-    list_filter = ("triage", "is_medico_legal", "is_unidentified")
+    list_filter = (
+        "triage",
+        "chief_complaint",
+        "mode_of_arrival",
+        "is_medico_legal",
+        "is_unidentified",
+    )
     search_fields = ("mlc_number", "patient__name", "police_station")
     raw_id_fields = (
         "encounter",

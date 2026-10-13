@@ -28,6 +28,30 @@ MLC_NATURES = [
     "Fall",
 ]
 
+# Emergency quick registration (v11 §7.1). Stored as plain text columns.
+CHIEF_COMPLAINTS = [
+    "Chest pain",
+    "Breathlessness",
+    "Trauma - road traffic",
+    "Fall",
+    "Burns",
+    "Poisoning",
+    "Assault",
+    "Seizure",
+    "Unconscious",
+    "Bleeding",
+    "Labour",
+    "Other",
+]
+
+ARRIVAL_MODES = [
+    "Walked in",
+    "POH ambulance",
+    "108 ambulance",
+    "Police",
+    "Transfer from another hospital",
+]
+
 
 # Front-desk registration (POH Front Desk v11 prototype, v12.1 rules). Stored as
 # plain text columns; the specs check each value against these lists.

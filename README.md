@@ -11,8 +11,8 @@ Mounted by Care at `/api/care_emergency/`.
 | `GET` | `desk/?facility=<id>` | The facility's emergency desk number (404 if not set) |
 | `PUT` | `desk/` | Set it: `{facility, phone_number}`. Facility admins only (`can_update_facility`). |
 | `POST` | `register/` | Create the patient, the `emer` encounter and the emergency record in one transaction. Allocates the MLC number. |
-| `GET` | `encounters/?facility=<id>` | List. Filters: `triage`, `is_medico_legal`, `is_unidentified`, `mlc_number`, `patient`. |
-| `GET` / `PATCH` | `encounters/<encounter_id>/` | Read, or edit triage, MLC and accompanying-person fields. `mlc_number` is read-only. |
+| `GET` | `encounters/?facility=<id>` | List. Filters: `triage`, `is_medico_legal`, `is_unidentified`, `mlc_number`, `chief_complaint`, `mode_of_arrival`, `patient`. |
+| `GET` / `PATCH` | `encounters/<encounter_id>/` | Read, or edit triage, MLC, chief complaint, mode of arrival and accompanying-person fields. `mlc_number` is read-only. |
 | `POST` | `patients/<patient_id>/convert/` | Convert to a normal patient. The body is a Care patient update and must include the patient's own `phone_number`. |
 | `POST` | `registration/` | Front-desk registration: creates the Care patient and its `PatientRegistration` row in one transaction. |
 | `GET` | `registration/<patient_id>/` | The patient's front-desk registration (404 if they weren't registered at the desk). Needs view access to the patient. |
@@ -36,13 +36,18 @@ Mounted by Care at `/api/care_emergency/`.
   "mlc_nature": "Road accident",
   "police_station": "Central",
   "distinguishing_marks": "Scar on left arm",
+  "chief_complaint": "Trauma - road traffic",
+  "mode_of_arrival": "108 ambulance",
   "is_unidentified": true,
   "brought_by": { "name": "Ravi", "phone_number": "+919898989898", "relationship": "Friend" }
 }
 ```
 
 - `patient` goes through Care's own `PatientCreateSpec` and `PatientViewSet`. Its `phone_number` is always replaced with the desk number, so the person who brought the patient in can't see the record through the OTP patient portal.
-- Age must be 1–130 unless a `date_of_birth` is sent. Care returns a 500 for `age: 0`.
+- Age must be 0–120 unless a `date_of_birth` is sent.
+- Quick registration (`is_unidentified: false`, the patient's real name in `patient`) needs a `chief_complaint`; an unknown patient doesn't. Options are `CHIEF_COMPLAINTS` and `ARRIVAL_MODES` in `constants.py`; `mode_of_arrival` is optional.
+- `is_medico_legal` defaults to `false`. When it is `true`, `mlc_nature` and `police_station` are required.
+- `brought_by` needs a `name` (who brought the patient, or where from) or a `phone_number` (the attendant's contact); the other parts are optional.
 - The encounter is `encounter_class: emer`, `status: in_progress`, `admit_source: emd`. Priority comes from triage: red → `emergency`, yellow → `urgent`, green → `routine`, black → `emergency`. Black does **not** set `deceased_datetime`.
 - MLC numbers are `MLC-<year>-<nnnn>` per facility. They are allocated from a locked counter row and are unique in the database. Once issued, a number is kept even if the case is later marked non-medico-legal.
 

@@ -158,6 +158,7 @@ class PatientNumberTests(CareAPITestBase):
         response = self.register_emergency(
             patient={"name": "Arun Kumar", "gender": "male", "age": 35},
             is_unidentified=False,
+            chief_complaint="Fall",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
         self.assertEqual(response.data["patient"]["name"], "Arun Kumar")

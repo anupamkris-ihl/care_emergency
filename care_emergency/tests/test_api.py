@@ -114,6 +114,76 @@ class EmergencyAPITests(CareAPITestBase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(Patient.objects.exists())
 
+    def test_medico_legal_defaults_to_no(self):
+        self.set_desk()
+        data = self.register_data()
+        for field in ("is_medico_legal", "mlc_nature", "police_station"):
+            del data[field]
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                reverse("emergency-register"), data, format="json"
+            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertFalse(response.data["emergency"]["is_medico_legal"])
+        self.assertIsNone(response.data["emergency"]["mlc_number"])
+
+    def test_quick_registration_needs_chief_complaint(self):
+        self.set_desk()
+        patient = {"name": "Arun Kumar", "gender": "male", "age": 40}
+        response = self.register(patient=patient, is_unidentified=False)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Patient.objects.exists())
+
+        response = self.register(
+            patient=patient,
+            is_unidentified=False,
+            chief_complaint="Chest pain",
+            mode_of_arrival="108 ambulance",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        emergency = response.data["emergency"]
+        self.assertEqual(emergency["chief_complaint"], "Chest pain")
+        self.assertEqual(emergency["mode_of_arrival"], "108 ambulance")
+        self.assertFalse(emergency["is_unidentified"])
+        self.assertEqual(Patient.objects.get().name, "Arun Kumar")
+
+    def test_unknown_options_are_rejected(self):
+        self.set_desk()
+        self.assertEqual(
+            self.register(chief_complaint="Headache").status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+        self.assertEqual(
+            self.register(mode_of_arrival="Helicopter").status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+        self.assertFalse(Patient.objects.exists())
+
+    def test_brought_by_needs_name_or_phone(self):
+        self.set_desk()
+        response = self.register(brought_by={"phone_number": COMPANION_NUMBER})
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data["emergency"]["brought_by"]["name"], "")
+        response = self.register(brought_by={"name": " "})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_update_chief_complaint_and_arrival(self):
+        self.set_desk()
+        encounter_id = self.register().data["encounter"]["id"]
+        url = reverse(
+            "emergency-encounter-detail", kwargs={"external_id": encounter_id}
+        )
+        response = self.client.patch(
+            url,
+            {"chief_complaint": "Seizure", "mode_of_arrival": "Police"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data["chief_complaint"], "Seizure")
+        self.assertEqual(response.data["mode_of_arrival"], "Police")
+        response = self.client.patch(url, {"chief_complaint": "Cough"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_register_without_permission(self):
         self.set_desk()
         self.client.force_authenticate(user=self.create_user())
@@ -135,13 +205,15 @@ class EmergencyAPITests(CareAPITestBase):
     def test_list_filters(self):
         self.set_desk()
         self.register()
-        self.register(is_medico_legal=False, triage="green")
+        self.register(is_medico_legal=False, triage="green", chief_complaint="Burns")
         url = reverse("emergency-encounter-list")
-        response = self.client.get(
-            url, {"facility": str(self.facility.external_id), "is_medico_legal": "true"}
-        )
+        facility = str(self.facility.external_id)
+        response = self.client.get(url, {"facility": facility, "is_medico_legal": "true"})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
+        response = self.client.get(url, {"facility": facility, "chief_complaint": "Burns"})
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["triage"], "green")
 
     def test_convert_to_normal_patient(self):
         self.set_desk()

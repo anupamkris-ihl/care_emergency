@@ -38,6 +38,8 @@ def serialize_emergency(record):
         "police_station": record.police_station,
         "mlc_number": record.mlc_number,
         "distinguishing_marks": record.distinguishing_marks,
+        "chief_complaint": record.chief_complaint,
+        "mode_of_arrival": record.mode_of_arrival,
         "brought_by": {
             "name": record.brought_by_name,
             "phone_number": record.brought_by_phone,

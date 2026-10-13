@@ -41,6 +41,8 @@ class EmergencyEncounter(EMRBaseModel):
     police_station = models.CharField(max_length=200, blank=True, default="")
     mlc_number = models.CharField(max_length=30, null=True, blank=True)
     distinguishing_marks = models.TextField(blank=True, default="")
+    chief_complaint = models.CharField(max_length=40, blank=True, default="")
+    mode_of_arrival = models.CharField(max_length=40, blank=True, default="")
     brought_by_name = models.CharField(max_length=200, blank=True, default="")
     brought_by_phone = models.CharField(max_length=14, blank=True, default="")
     brought_by_relationship = models.CharField(max_length=50, blank=True, default="")

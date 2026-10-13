@@ -287,6 +287,8 @@ class RegisterView(EmergencyAPIView):
                 mlc_nature=spec.mlc_nature,
                 police_station=spec.police_station.strip(),
                 distinguishing_marks=spec.distinguishing_marks.strip(),
+                chief_complaint=spec.chief_complaint,
+                mode_of_arrival=spec.mode_of_arrival,
                 is_unidentified=spec.is_unidentified,
                 brought_by_name=brought_by.name.strip() if brought_by else "",
                 brought_by_phone=(brought_by.phone_number or "") if brought_by else "",
@@ -314,6 +316,8 @@ class EmergencyEncounterFilters(filters.FilterSet):
     is_medico_legal = filters.BooleanFilter(field_name="is_medico_legal")
     is_unidentified = filters.BooleanFilter(field_name="is_unidentified")
     mlc_number = filters.CharFilter(field_name="mlc_number", lookup_expr="iexact")
+    chief_complaint = filters.CharFilter(field_name="chief_complaint")
+    mode_of_arrival = filters.CharFilter(field_name="mode_of_arrival")
     patient = filters.UUIDFilter(field_name="patient__external_id")
 
 
