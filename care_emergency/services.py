@@ -246,7 +246,16 @@ def default_visit_purpose(token_slot, patient):
     return VisitPurposes.follow_up if earlier else VisitPurposes.new
 
 
-def store_document(user, upload, category, side, capture_method, patient=None):
+def store_document(  # noqa: PLR0913
+    user,
+    upload,
+    category,
+    side,
+    capture_method,
+    patient=None,
+    source="",
+    document_date=None,
+):
     """Saves the file as a Care FileUpload of the patient (or staged, with no
     patient yet) and records what it is."""
     with transaction.atomic():
@@ -270,6 +279,8 @@ def store_document(user, upload, category, side, capture_method, patient=None):
             category=category,
             side=side,
             capture_method=capture_method,
+            source=source,
+            document_date=document_date,
             created_by=user,
             updated_by=user,
         )

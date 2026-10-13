@@ -213,7 +213,9 @@ class DeskRegistrationTests(CareAPITestBase):
             self.body(preferred_language="Santali", consent_language="Santali")
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
-        self.assertEqual(PatientRegistration.objects.get().preferred_language, "Santali")
+        self.assertEqual(
+            PatientRegistration.objects.get().preferred_language, "Santali"
+        )
 
     def test_language_outside_the_master_is_rejected(self):
         self.assert_rejected(self.body(preferred_language="Klingon"), "'Klingon'")
@@ -251,6 +253,78 @@ class DeskRegistrationTests(CareAPITestBase):
             )
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+    def test_whatsapp_owner_staff_category_and_permanent_address(self):
+        staff = {
+            "registration_type": "STAFF",
+            "payer_type": "Staff",
+            "payer_name": "POH staff — self",
+            "staff_category": "Nurse",
+            "employee_id": "POH-1182",
+            "whatsapp_owner": "Spouse",
+            "mobile_owner": "Father",
+            "communication_channels": ["IVR"],
+            "permanent_house": "12",
+            "permanent_locality": "Fort",
+            "permanent_city": "Mumbai",
+            "permanent_district": "Mumbai",
+            "permanent_state": "Maharashtra",
+            "permanent_pincode": "400001",
+        }
+        PostOffice.objects.create(
+            pincode="400001",
+            name="Fort",
+            district="Mumbai",
+            state="Maharashtra",
+            loaded_at=timezone.now(),
+        )
+        for registration, message in (
+            ({"staff_category": "Pilot"}, "'Pilot' is not one of"),
+            ({"whatsapp_owner": "Cousin"}, "'Cousin' is not one of"),
+            ({"whatsapp_number": None}, "Enter the WhatsApp number"),
+            (
+                {"permanent_district": "Pune"},
+                "Permanent address: The district and state do not match the PIN",
+            ),
+            ({"permanent_pincode": "012345"}, "permanent_pincode"),
+            ({"do_not_contact": True}, "Do not contact cannot have"),
+        ):
+            with self.subTest(registration=registration):
+                self.assert_rejected(self.body(**{**staff, **registration}), message)
+        self.assert_rejected(
+            self.body(staff_category="Doctor"), "only for staff payers"
+        )
+
+        front = stage_document(self.user, "payer_card", "front")
+        back = stage_document(self.user, "payer_card", "back")
+        response = self.register(self.body(documents=[front, back], **staff))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        record = PatientRegistration.objects.get()
+        self.assertEqual(record.staff_category, "Nurse")
+        self.assertEqual(record.whatsapp_owner, "Spouse")
+        self.assertEqual(record.mobile_owner, "Father")
+        self.assertEqual(record.communication_channels, ["IVR"])
+        self.assertEqual(record.permanent_pincode, "400001")
+        self.assertEqual(response.data["registration"]["permanent_city"], "Mumbai")
+
+    def test_do_not_contact_is_kept(self):
+        body = self.body(
+            do_not_contact=True,
+            communication_channels=[],
+            promotions_consent=False,
+            promotion_purposes=[],
+        )
+        response = self.register(body)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertTrue(PatientRegistration.objects.get().do_not_contact)
+        self.assertTrue(response.data["registration"]["do_not_contact"])
+
+    def test_gender_other_is_accepted(self):
+        response = self.register(
+            self.body(patient={"gender": "other"}, title="Mx", pregnancy_status="")
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(Patient.objects.get().gender, "other")
 
     def test_documents_must_be_the_users_own_and_unused(self):
         other = self.create_super_user()
@@ -782,7 +856,7 @@ class DeskRegistrationTests(CareAPITestBase):
         body["patient"]["phone_number"] = None
         patient, _ = self.create_no_phone(body)
         url = reverse("patient-contact", args=[patient.external_id])
-        for owner in ("Self", "No phone", "Other"):
+        for owner in ("Self", "No phone", "Cousin"):
             response = self.client.patch(
                 url, {"phone_number": PHONE, "mobile_owner": owner}, format="json"
             )

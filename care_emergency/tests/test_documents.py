@@ -53,6 +53,23 @@ class DocumentTests(CareAPITestBase):
         file = FileUpload.objects.get()
         self.assertEqual(file.associating_id, str(self.patient.external_id))
 
+    def test_source_and_date_are_kept(self, put_object, delete_object):
+        response = self.upload(source="AIIMS Delhi", document_date="2026-01-15")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        document = PatientDocument.objects.get()
+        self.assertEqual(document.source, "AIIMS Delhi")
+        self.assertEqual(str(document.document_date), "2026-01-15")
+        self.assertEqual(response.data["source"], "AIIMS Delhi")
+        # Blank optional fields fall back to their defaults.
+        response = self.upload(source="", document_date="")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertIsNone(response.data["document_date"])
+
+    def test_document_date_cannot_be_in_the_future(self, put_object, delete_object):
+        response = self.upload(document_date="2999-01-01")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("cannot be in the future", str(response.data))
+
     def test_rejects_other_types_and_choices(self, put_object, delete_object):
         response = self.upload(content_type="text/plain")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

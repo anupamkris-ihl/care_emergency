@@ -114,6 +114,7 @@ class PatientRegistration(EMRBaseModel):
     # Contact
     mobile_owner = models.CharField(max_length=20)
     whatsapp_number = models.CharField(max_length=16, blank=True, default="")
+    whatsapp_owner = models.CharField(max_length=20, blank=True, default="")
     alternate_phone_number = models.CharField(max_length=16, blank=True, default="")
     email = models.CharField(max_length=254, blank=True, default="")
     house = models.CharField(max_length=100, blank=True, default="")
@@ -122,6 +123,13 @@ class PatientRegistration(EMRBaseModel):
     city = models.CharField(max_length=100, blank=True, default="")
     district = models.CharField(max_length=100, blank=True, default="")
     state = models.CharField(max_length=100, blank=True, default="")
+    permanent_house = models.CharField(max_length=100, blank=True, default="")
+    permanent_street = models.CharField(max_length=150, blank=True, default="")
+    permanent_locality = models.CharField(max_length=100, blank=True, default="")
+    permanent_city = models.CharField(max_length=100, blank=True, default="")
+    permanent_district = models.CharField(max_length=100, blank=True, default="")
+    permanent_state = models.CharField(max_length=100, blank=True, default="")
+    permanent_pincode = models.CharField(max_length=6, blank=True, default="")
     next_of_kin_name = models.CharField(max_length=40, blank=True, default="")
     next_of_kin_relationship = models.CharField(max_length=30, blank=True, default="")
     next_of_kin_phone = models.CharField(max_length=16, blank=True, default="")
@@ -164,6 +172,7 @@ class PatientRegistration(EMRBaseModel):
     # Payer
     payer_type = models.CharField(max_length=20)
     payer_name = models.CharField(max_length=200, blank=True, default="")
+    staff_category = models.CharField(max_length=20, blank=True, default="")
     employee_id = models.CharField(max_length=24, blank=True, default="")
     policy_number = models.CharField(max_length=24, blank=True, default="")
     policy_valid_till = models.DateField(null=True, blank=True)
@@ -199,6 +208,7 @@ class PatientRegistration(EMRBaseModel):
     communication_channels = ArrayField(
         models.CharField(max_length=20), default=list, blank=True
     )
+    do_not_contact = models.BooleanField(default=False)
     promotions_consent = models.BooleanField(default=False)
     promotion_purposes = ArrayField(
         models.CharField(max_length=30), default=list, blank=True
@@ -315,6 +325,9 @@ class PatientDocument(EMRBaseModel):
     category = models.CharField(max_length=30, choices=DocumentCategories.choices)
     side = models.CharField(max_length=10, choices=DocumentSides.choices)
     capture_method = models.CharField(max_length=20, choices=CaptureMethods.choices)
+    # Where the document came from (e.g. the issuing hospital) and its date.
+    source = models.CharField(max_length=100, blank=True, default="")
+    document_date = models.DateField(null=True, blank=True)
 
 
 class ArtCouple(EMRBaseModel):

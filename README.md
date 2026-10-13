@@ -51,7 +51,7 @@ Mounted by Care at `/api/care_emergency/`.
 `registration/` body: `{"facility": "<uuid or null>", "patient": {...}, "registration": {...}}`.
 
 - `patient` goes through Care's own `PatientCreateSpec` and `PatientViewSet` (name, gender, phone, date of birth or age, address, PIN, blood group, emergency phone, identifiers).
-- `registration` is `RegistrationSpec` in `specs.py`: identity, contact, next of kin, ID summary (type and last 4 only) and ABHA, travel documents, FRRO C-Form, interpreter language, allergies (several, stored as `RegistrationAllergy` rows), assistance, pregnancy, VIP (note, authoriser, handle with care; `vip_flagged_by` is the registering user), payer and concession, arrival and lead source, camp and referrer, remarks, consents and contact channels.
+- `registration` is `RegistrationSpec` in `specs.py`: identity, contact (who the main mobile and the WhatsApp number belong to, `do_not_contact`), permanent address (house to PIN; also send its text line as the patient's `permanent_address`), next of kin, ID summary (type and last 4 only) and ABHA, travel documents, FRRO C-Form, interpreter language, allergies (several, stored as `RegistrationAllergy` rows), assistance, pregnancy, VIP (note, authoriser, handle with care; `vip_flagged_by` is the registering user), payer (with `staff_category` for staff payers) and concession, arrival and lead source, camp and referrer, remarks, consents and contact channels.
 - The rules follow the POH front-desk v12.1 spec: under-18s need an exact date of birth, a guardian and a next of kin; foreign nationals need passport, visa and C-Form; the three core consents are required; option fields only take the values in `constants.py`.
 
 ## Patient numbers
@@ -153,4 +153,4 @@ ADDITIONAL_PLUGS=$PLUGS
 python manage.py migrate care_emergency
 ```
 
-Alternatively, add the plug to `plug_config.py` in a Care fork. That covers both build and runtime, with no env var. Pin `version` to a tag (for example `@v0.5.0`) rather than `@main` for production.
+Alternatively, add the plug to `plug_config.py` in a Care fork. That covers both build and runtime, with no env var. Pin `version` to a tag (for example `@v0.6.0`) rather than `@main` for production.

@@ -36,7 +36,22 @@ INTERNATIONAL_TYPES = ["INT", "NRI"]
 TITLES = ["Mr", "Master", "Ms", "Mrs", "Dr", "Mx"]
 MARITAL_STATUSES = ["married", "single", "divorced", "widowed", "separated"]
 GUARDIAN_RELATIONSHIPS = ["S/O", "D/O", "Ward of"]
-MOBILE_OWNERS = ["Self", "Parent", "Guardian", "Relative", "No phone"]
+# Who a phone number belongs to (main mobile and WhatsApp). "Parent" and
+# "Relative" stay valid for main mobiles registered before the full list.
+PHONE_OWNERS = [
+    "Self",
+    "Father",
+    "Mother",
+    "Spouse",
+    "Son",
+    "Daughter",
+    "Brother",
+    "Sister",
+    "Guardian",
+    "Friend",
+    "Other",
+]
+MOBILE_OWNERS = [*PHONE_OWNERS, "Parent", "Relative", "No phone"]
 NATIONALITY_CATEGORIES = ["Indian resident", "NRI", "OCI-PIO", "Foreign", "Refugee"]
 IDENTITY_CARD_TYPES = [
     "aadhaar",
@@ -77,6 +92,14 @@ ASSISTANCE_NEEDS = [
     "Pacemaker / implant",
 ]
 PREGNANCY_STATUSES = ["not_pregnant", "pregnant", "unknown"]
+STAFF_CATEGORIES = [
+    "Doctor",
+    "Nurse",
+    "Paramedical",
+    "Administration",
+    "Support staff",
+    "Other",
+]
 PAYER_TYPES = [
     "Self",
     "Corporate",
@@ -135,7 +158,7 @@ FOREIGN_LANGUAGES = [
 LANGUAGES = ["English", *EIGHTH_SCHEDULE_LANGUAGES, *FOREIGN_LANGUAGES]
 CONSENT_GIVERS = ["The patient", "Spouse", "Parent", "Guardian", "Next of kin"]
 CONSENT_METHODS = ["Signature", "Scanned form", "Thumb impression"]
-COMMUNICATION_CHANNELS = ["WhatsApp", "SMS", "Phone call", "Email"]
+COMMUNICATION_CHANNELS = ["WhatsApp", "SMS", "Phone call", "IVR", "Email"]
 PROMOTION_PURPOSES = [
     "Health tips",
     "Newsletters",

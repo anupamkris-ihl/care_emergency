@@ -674,8 +674,13 @@ class DocumentView(EmergencyAPIView):
         upload = request.FILES.get("file")
         if upload is None:
             raise ValidationError("Choose a file")
+        # Blank optional multipart fields are left out so their defaults apply.
         spec = DocumentUploadSpec.model_validate(
-            {key: request.data.get(key) for key in DocumentUploadSpec.model_fields}
+            {
+                key: request.data[key]
+                for key in DocumentUploadSpec.model_fields
+                if request.data.get(key) not in (None, "")
+            }
         )
         if upload.size > settings.MAX_FILE_UPLOAD_SIZE * 1024 * 1024:
             err = f"Files can be up to {settings.MAX_FILE_UPLOAD_SIZE} MB"
@@ -695,6 +700,8 @@ class DocumentView(EmergencyAPIView):
             spec.side,
             spec.capture_method,
             patient,
+            spec.source,
+            spec.document_date,
         )
         return Response(serialize_document(document))
 

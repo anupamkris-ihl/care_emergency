@@ -29,10 +29,12 @@ from care_emergency.constants import (
     MOBILE_OWNERS,
     NATIONALITY_CATEGORIES,
     PAYER_TYPES,
+    PHONE_OWNERS,
     PREGNANCY_STATUSES,
     PROMOTION_PURPOSES,
     REGISTRATION_TYPES,
     RELIGIONS,
+    STAFF_CATEGORIES,
     TITLES,
     UNIT_CODE_PATTERN,
     VISA_TYPES,
@@ -181,6 +183,7 @@ REGISTRATION_CHOICES = {
     "consent_language": (LANGUAGES, False),
     "guardian_relationship": (GUARDIAN_RELATIONSHIPS, True),
     "mobile_owner": (MOBILE_OWNERS, False),
+    "whatsapp_owner": (PHONE_OWNERS, True),
     "nationality_category": (NATIONALITY_CATEGORIES, False),
     "identity_card_type": (IDENTITY_CARD_TYPES, True),
     "abha_status": (ABHA_STATUSES, True),
@@ -189,6 +192,7 @@ REGISTRATION_CHOICES = {
     "allergy_status": (ALLERGY_STATUSES, False),
     "pregnancy_status": (PREGNANCY_STATUSES, True),
     "payer_type": (PAYER_TYPES, False),
+    "staff_category": (STAFF_CATEGORIES, True),
     "consent_given_by": (CONSENT_GIVERS, False),
     "consent_method": (CONSENT_METHODS, False),
 }
@@ -213,6 +217,7 @@ class RegistrationSpec(BaseModel):
 
     mobile_owner: str
     whatsapp_number: PhoneNumber | None = Field(default=None, max_length=16)
+    whatsapp_owner: str = ""
     alternate_phone_number: PhoneNumber | None = Field(default=None, max_length=16)
     email: str = Field(default="", max_length=254)
     house: str = Field(default="", max_length=100)
@@ -221,6 +226,15 @@ class RegistrationSpec(BaseModel):
     city: str = Field(default="", max_length=100)
     district: str = Field(default="", max_length=100)
     state: str = Field(default="", max_length=100)
+    # Permanent address, when it differs from the current one. Its text line
+    # is also sent as the Care patient's permanent_address.
+    permanent_house: str = Field(default="", max_length=100)
+    permanent_street: str = Field(default="", max_length=150)
+    permanent_locality: str = Field(default="", max_length=100)
+    permanent_city: str = Field(default="", max_length=100)
+    permanent_district: str = Field(default="", max_length=100)
+    permanent_state: str = Field(default="", max_length=100)
+    permanent_pincode: str = Field(default="", pattern=r"^(?:[1-9]\d{5})?$")
     next_of_kin_name: str = ""
     next_of_kin_relationship: str = Field(default="", max_length=30)
     next_of_kin_phone: PhoneNumber | None = Field(default=None, max_length=16)
@@ -254,6 +268,7 @@ class RegistrationSpec(BaseModel):
 
     payer_type: str
     payer_name: str = Field(default="", max_length=200)
+    staff_category: str = ""
     employee_id: str = Field(default="", pattern=rf"^(?:{PAYER_ID})?$")
     policy_number: str = Field(default="", pattern=rf"^(?:{PAYER_ID})?$")
     policy_valid_till: datetime.date | None = None
@@ -283,6 +298,8 @@ class RegistrationSpec(BaseModel):
     clinical_photography_consent: bool = False
     research_consent: bool = False
     communication_channels: list[str] = []
+    # Explicit opt-out: no channels and no promotions.
+    do_not_contact: bool = False
     promotions_consent: bool = False
     promotion_purposes: list[str] = []
 
@@ -309,6 +326,16 @@ class RegistrationSpec(BaseModel):
         one_of(DESK_ARRIVAL_SOURCES, blank=False)(self.arrival_source)
         if self.promotion_purposes and not self.promotions_consent:
             raise ValueError("Promotion purposes need promotional consent")
+        if self.do_not_contact and (
+            self.communication_channels or self.promotions_consent
+        ):
+            raise ValueError(
+                "Do not contact cannot have communication channels or promotions"
+            )
+        if self.whatsapp_owner and not self.whatsapp_number:
+            raise ValueError("Enter the WhatsApp number its owner belongs to")
+        if self.staff_category and self.payer_type != "Staff":
+            raise ValueError("The staff category is only for staff payers")
         return self
 
     @model_validator(mode="after")
@@ -678,6 +705,19 @@ class DeskRegisterSpec(BaseModel):
             )
         ):
             raise ValueError(problem)
+        if (
+            domestic
+            and registration.permanent_pincode
+            and (
+                problem := address_problem(
+                    registration.permanent_pincode,
+                    registration.permanent_locality,
+                    registration.permanent_district,
+                    registration.permanent_state,
+                )
+            )
+        ):
+            raise ValueError(f"Permanent address: {problem}")
         for label, phone in (
             ("main mobile", self.patient.get("phone_number")),
             ("WhatsApp mobile", registration.whatsapp_number),
@@ -759,9 +799,18 @@ class DocumentUploadSpec(BaseModel):
     category: DocumentCategories
     side: DocumentSides
     capture_method: CaptureMethods
+    source: str = Field(default="", max_length=100)
+    document_date: datetime.date | None = None
     # Attaches to an existing patient; left out, the document is staged for a
     # registration.
     patient: UUID4 | None = None
+
+    @model_validator(mode="after")
+    def validate_date(self):
+        self.source = self.source.strip()
+        if self.document_date and self.document_date > timezone.localdate():
+            raise ValueError("The document date cannot be in the future")
+        return self
 
 
 class StatutoryFlagSpec(BaseModel):
