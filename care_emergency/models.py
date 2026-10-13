@@ -274,8 +274,9 @@ class FacilityUnit(EMRBaseModel):
 
 class PatientNumberSequence(models.Model):
     """One counter row per series, unit and period, incremented under a row
-    lock. period is the day for daily series (UNK) and "" otherwise. Counters
-    only go up, so a number is never issued twice."""
+    lock. period is the day for daily series (UNK), the year for billing
+    documents (INV, RCT, ADV, CN, RFD) and "" otherwise. Counters only go up,
+    so a number is never issued twice."""
 
     series = models.CharField(max_length=3)
     facility = models.ForeignKey(

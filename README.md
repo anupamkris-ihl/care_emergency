@@ -105,7 +105,22 @@ India Post's PIN directory (D17, M01) is kept in `PostOffice`: one row per post 
 - **Payer tariff:** saving a registration tags the patient (*Billing payer*). Corporate gets 15% off list (×0.85), Govt scheme 40% (×0.6), staff 50% (×0.5) and International, INT and NRI a 90% surcharge (×1.9). Insurance and self-pay pay list.
 - **Concessions:** staff self get a further 50% (consultation free, other heads 25% of list), dependants 50% on every head. A self-pay patient's chosen senior, freedom fighter or veteran concession adds 15%, 25% or 10%. Care's discounts don't compound, so all are expressed as a share of list.
 - **Discount codes:** coupons, discretionary amounts and percentages, and 100% entitlements are added to the facility's discount codes, keeping any codes already there.
-- **Invoice numbers:** `INV/<unit>/<yy>/<count:05d>`. Care's `invoice_count` is all-time, so the sequence doesn't restart each year.
+- **Invoice numbers:** the plug numbers every invoice `INV/<unit>/<yy>/NNNNN` (item-return invoices `CN/…`), restarting each year under a row lock. The first number of a year follows the highest one already issued. Care's own `invoice_number_expression` is still set, but only for its preview.
+
+### Billing rules
+
+`billing_rules.py` checks Care's charge items, invoices and payments as they're saved, in facilities with a unit code. A broken rule is refused with a 400 from Care's own endpoint. Charge item rules apply only to POH catalogue lines, so pharmacy items are untouched.
+
+- **Quantity:** a whole number from 1 to 20. Ward days aren't capped.
+- **Registration fee:** charged once in a lifetime, at any POH facility. Later REG lines get the 100% *registration already paid* entitlement. A cancelled REG line doesn't count.
+- **Follow-up:** a consultation (CON2, VID, HOMEV) on an encounter whose booking is a follow-up inside the schedule's revisit window gets the 100% *follow-up* entitlement.
+- **Entitlements** replace any concession on the line, as v11 prices them.
+- **SAC:** each line's `code` is the SAC of its head (999312 for H1, 999316 otherwise), and it is copied onto the invoice line.
+- **Payments:** amounts in whole rupees, under ₹1 crore. Each one gets a number in `extensions.billing.number`: `RCT/…` for payments, `ADV/…` for advances, `RFD/…` for refunds (credit-note payments). The number is kept when the payment is updated.
+- **Advances** need `extensions.billing.purpose`: OPD procedure, IP admission, Day-care, IVF package, Health check package or Home care. An unknown patient (UNK number, no UHID yet) can't pay an advance.
+- **Refunds** need `extensions.billing.cause` (`hospital` or `patient`) and a `reason` from the v11 list. A patient-caused refund above ₹500 needs a supervisor, meaning someone allowed to cancel payments (`can_destroy_payment_reconciliation`).
+
+Care already refuses edits to an issued invoice or its lines, and it requires a payment method on every payment.
 
 Care can't split a bill between patient and payer, cap or expire coupons, or require approval for discounts; those need a bill screen.
 
@@ -138,4 +153,4 @@ ADDITIONAL_PLUGS=$PLUGS
 python manage.py migrate care_emergency
 ```
 
-Alternatively, add the plug to `plug_config.py` in a Care fork. That covers both build and runtime, with no env var. Pin `version` to a tag (for example `@v0.4.0`) rather than `@main` for production.
+Alternatively, add the plug to `plug_config.py` in a Care fork. That covers both build and runtime, with no env var. Pin `version` to a tag (for example `@v0.5.0`) rather than `@main` for production.

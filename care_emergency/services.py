@@ -130,6 +130,29 @@ def allocate_patient_number(series, facility, day=None):
     return f"{series}-{code}-{sequence.last_value:07d}", sequence.last_value
 
 
+def allocate_document_number(series, facility, seed=None):
+    """Returns the next billing document number for the facility's unit,
+    counted per calendar year: INV/LN/26/00001, RCT/LN/26/00001. seed(prefix)
+    gives the highest number already issued with that prefix, used once when
+    the year's counter is created. Locked like MLC numbers."""
+    code = unit_code(facility)
+    year = care_now().year
+    prefix = f"{series}/{code}/{year % 100:02d}/"
+    with transaction.atomic():
+        PatientNumberSequence.objects.get_or_create(
+            series=series,
+            facility=facility,
+            period=str(year),
+            defaults={"last_value": seed(prefix) if seed else 0},
+        )
+        sequence = PatientNumberSequence.objects.select_for_update().get(
+            series=series, facility=facility, period=str(year)
+        )
+        sequence.last_value += 1
+        sequence.save(update_fields=["last_value"])
+    return f"{prefix}{sequence.last_value:05d}"
+
+
 def attach_patient_number(patient, series, value):
     PatientIdentifier.objects.create(
         patient=patient, config=patient_number_config(series), value=value

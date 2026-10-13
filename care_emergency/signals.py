@@ -1,9 +1,17 @@
 from care.emr.models import Encounter
+from care.emr.models.charge_item import ChargeItem
+from care.emr.models.invoice import Invoice
+from care.emr.models.payment_reconciliation import PaymentReconciliation
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
 from care_emergency.constants import CONSULTATION_ENCOUNTER_CLASS, PatientNumberSeries
 from care_emergency.billing import sync_billing_tags
+from care_emergency.billing_rules import (
+    check_charge_item,
+    check_payment,
+    number_invoice,
+)
 from care_emergency.models import AppointmentDetails, FacilityUnit, PatientRegistration
 from care_emergency.services import issue_patient_number, patient_number
 
@@ -49,3 +57,24 @@ def tag_payer_for_billing(sender, instance, **kwargs):
     """Keeps the patient's payer and concession tags in step with the desk
     registration, so Care prices their charge items at the right tariff."""
     sync_billing_tags(instance)
+
+
+@receiver(pre_save, sender=ChargeItem, dispatch_uid="care_emergency_charge_rules")
+def apply_charge_rules(sender, instance, **kwargs):
+    """Quantity, once-in-a-lifetime registration, free follow-up and SAC on
+    POH catalogue lines (billing_rules)."""
+    check_charge_item(instance)
+
+
+@receiver(pre_save, sender=Invoice, dispatch_uid="care_emergency_invoice_number")
+def apply_invoice_number(sender, instance, **kwargs):
+    number_invoice(instance)
+
+
+@receiver(
+    pre_save, sender=PaymentReconciliation, dispatch_uid="care_emergency_payment_rules"
+)
+def apply_payment_rules(sender, instance, **kwargs):
+    """Whole-rupee amounts, advance purpose, refund cause and approval, and the
+    receipt number (billing_rules)."""
+    check_payment(instance)

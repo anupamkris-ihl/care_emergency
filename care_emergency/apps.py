@@ -7,9 +7,14 @@ class CareEmergencyConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
 
     def ready(self):
+        from care.emr.registries.extensions.registry import ExtensionRegistry
+
         from care_emergency import signals, tasks  # noqa: F401
+        from care_emergency.billing_rules import BillingExtension
         from care_emergency.restricted import mask_patient
         from care_emergency.contact import hide_no_phone, patient_phone_allowed
+
+        ExtensionRegistry.register(BillingExtension())
 
         # Masks restricted patients (D30) wherever Care shows a patient. Care
         # releases without the hook still run the plug, without masking.

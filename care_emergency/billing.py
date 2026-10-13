@@ -12,9 +12,10 @@ setup_billing() loads them into Care's own billing models for one facility:
 - the INV/{unit}/{yy}/NNNNN invoice number.
 
 sync_billing_tags() keeps a patient's payer and concession tags in step with
-their desk registration. Payer shares (insurance 90/10, credit to the payer),
-coupon caps and validity, discount approvals and entitlement rules are not
-expressible in Care's pricing and stay outside this module."""
+their desk registration. The registration and follow-up entitlements are
+applied by billing_rules. Payer shares (insurance 90/10, credit to the payer),
+coupon caps and validity and discount approvals are not expressible in Care's
+pricing and stay outside this module."""
 
 from decimal import Decimal
 
