@@ -19,6 +19,7 @@ from care.emr.resources.scheduling.slot.spec import TokenBookingReadSpec
 from care.facility.models import Facility
 from care.security.authorization import AuthorizationController
 from care.users.models import User
+from care.utils.lock import ObjectLocked
 from care.utils.shortcuts import get_object_or_404
 from care.utils.sms import send_text_message
 from care.utils.time_util import care_now
@@ -60,6 +61,13 @@ from care_emergency.models import (
     WalkInReserve,
 )
 from care_emergency.contact import is_desk_phone
+from care_emergency.merge import (
+    can_merge,
+    last_visits,
+    merge_preview,
+    merge_patients,
+    resolve_merged,
+)
 from care_emergency.pincodes import lookup as lookup_pincode
 from care_emergency.pincodes import plug_setting
 from care_emergency.restricted import can_see_identity, new_alias, restriction_of
@@ -83,6 +91,7 @@ from care_emergency.services import (
     attach_patient_number,
     check_walk_in_reserve,
     default_visit_purpose,
+    display_numbers,
     issue_patient_number,
     missing_documents,
     staged_documents,
@@ -100,7 +109,9 @@ from care_emergency.specs import (
     EmergencyRegisterSpec,
     EmergencyUpdateSpec,
     MedicoLegalMixin,
+    PatientMergeSpec,
     PatientNumberIssueSpec,
+    PatientSummarySpec,
     QuickFormSpec,
     QuickRegisterSpec,
     StatutoryFlagSpec,
@@ -830,15 +841,104 @@ class PatientNumberSearchView(EmergencyAPIView):
         value = request.query_params.get("uhid", "").strip().upper()
         if not value or len(value) > 40:
             raise ValidationError("Enter the full UHID")
-        ids = PatientIdentifier.objects.filter(
+        # A merged-away record's UHID is kept (soft-deleted) on it, and leads
+        # to the record it was merged into.
+        ids = PatientIdentifier._base_manager.filter(  # noqa: SLF001
             config__config__system="care_emergency/uhid", value=value
-        ).values("patient_id")
+        ).values_list("patient_id", flat=True)
         results = [
             PatientRetrieveSpec.serialize(patient).to_json()
-            for patient in Patient.objects.filter(id__in=ids)
+            for patient in Patient.objects.filter(id__in=resolve_merged(ids))
             if can("can_view_patient_obj", request.user, patient)
         ]
         return Response({"count": len(results), "results": results})
+
+
+class PatientSummaryView(EmergencyAPIView):
+    """The patient number and last visit of each search result, in one call.
+    Unknown, deleted and not viewable patients are left out."""
+
+    def post(self, request):
+        spec = PatientSummarySpec.model_validate(request.data)
+        patients = Patient.objects.filter(external_id__in=spec.patients)
+        visible = set(
+            AuthorizationController.call(
+                "get_filtered_patients", patients, request.user
+            ).values_list("id", flat=True)
+        )
+        # Desk access (registration facility) isn't in Care's filter.
+        allowed = {
+            patient.external_id: patient
+            for patient in patients
+            if patient.id in visible
+            or can("can_view_patient_obj", request.user, patient)
+        }
+        ids = [x.id for x in allowed.values()]
+        numbers = display_numbers(ids)
+        visits = last_visits(ids)
+        results = [
+            {
+                "id": str(external_id),
+                "patient_number": numbers.get(allowed[external_id].id),
+                "last_visit": visits.get(allowed[external_id].id),
+            }
+            for external_id in dict.fromkeys(spec.patients)
+            if external_id in allowed
+        ]
+        return Response({"results": results})
+
+
+class PatientMergeView(EmergencyAPIView):
+    """Merge a duplicate (source) into the record that is kept (target).
+    GET previews it; POST merges. Both need merge authority (can_merge)."""
+
+    def get_pair(self, source_id, target_id, lock=False):
+        for value in (source_id, target_id):
+            if not value:
+                raise ValidationError("source and target are required")
+        patients = Patient.objects.all()
+        if lock:
+            # A stable order, so two merges of the same pair can't deadlock.
+            patients = patients.select_for_update().order_by("id")
+            list(patients.filter(external_id__in=[source_id, target_id]))
+        source = get_object_or_404(patients, external_id=source_id)
+        target = get_object_or_404(patients, external_id=target_id)
+        if not can_merge(self.request.user, source, target):
+            raise PermissionDenied("You do not have permission to merge these records")
+        return source, target
+
+    def get(self, request):
+        source, target = self.get_pair(
+            request.query_params.get("source"), request.query_params.get("target")
+        )
+        return Response(merge_preview(source, target))
+
+    def post(self, request):
+        spec = PatientMergeSpec.model_validate(request.data)
+        lock = PatientCreateLock()
+        try:
+            lock.acquire()
+        except ObjectLocked as e:
+            raise ValidationError(
+                "Another registration is being saved, try again in a moment"
+            ) from e
+        try:
+            with transaction.atomic():
+                source, target = self.get_pair(spec.source, spec.target, lock=True)
+                merge = merge_patients(
+                    source, target, spec.choices, spec.reason, request.user
+                )
+                transaction.on_commit(lock.release)
+        except BaseException:
+            lock.release()
+            raise
+        target.refresh_from_db()
+        return Response(
+            {
+                "patient": PatientRetrieveSpec.serialize(target).to_json(),
+                "moved": merge.moved,
+            }
+        )
 
 
 class PatientContactView(EmergencyAPIView):

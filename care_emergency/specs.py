@@ -1,5 +1,6 @@
 import datetime
 import re
+from typing import Literal
 
 from care.emr.resources.base import PhoneNumber
 from django.utils import timezone
@@ -1000,3 +1001,20 @@ class QuickFormSpec(BaseModel):
         if problem:
             raise ValueError(problem)
         return self
+
+
+class PatientSummarySpec(BaseModel):
+    patients: list[UUID4] = Field(min_length=1, max_length=50)
+
+
+class PatientMergeSpec(BaseModel):
+    source: UUID4
+    target: UUID4
+    # Field key -> whose value to keep, for each conflicting field.
+    choices: dict[str, Literal["source", "target"]] = Field(default_factory=dict)
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_reason(cls, value):
+        return value.strip() if isinstance(value, str) else value

@@ -11,6 +11,8 @@ from care_emergency.views import (
     PatientNumberView,
     PatientNumberSearchView,
     PatientContactView,
+    PatientMergeView,
+    PatientSummaryView,
     PatientRegistrationView,
     PincodeView,
     PatientQuickRegistrationView,
@@ -37,6 +39,12 @@ urlpatterns = [
         PatientNumberSearchView.as_view(),
         name="patient-number-search",
     ),
+    path(
+        "patients/summary/",
+        PatientSummaryView.as_view(),
+        name="patient-summary",
+    ),
+    path("patients/merge/", PatientMergeView.as_view(), name="patient-merge"),
     path(
         "patients/<uuid:patient_id>/contact/",
         PatientContactView.as_view(),

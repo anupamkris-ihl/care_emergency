@@ -103,6 +103,31 @@ def patient_number(patient, series):
     return identifier.value if identifier else None
 
 
+# The number a patient is known by, best first, with the label staff see.
+PATIENT_NUMBER_LABELS = {
+    PATIENT_NUMBER_SYSTEMS[PatientNumberSeries.uhid]: "UHID",
+    PATIENT_NUMBER_SYSTEMS[PatientNumberSeries.pre_registration]: "Pre-registration",
+    PATIENT_NUMBER_SYSTEMS[PatientNumberSeries.unknown]: "Unknown patient ID",
+}
+
+
+def display_numbers(patient_ids):
+    """Patient id -> {"label", "value"} of their UHID or, until they have one,
+    their PRE or UNK number, in one query. Patients without one are left out."""
+    priority = list(PATIENT_NUMBER_LABELS)
+    best = {}
+    for patient_id, system, value in PatientIdentifier.objects.filter(
+        patient_id__in=patient_ids, config__config__system__in=priority
+    ).values_list("patient_id", "config__config__system", "value"):
+        current = best.get(patient_id)
+        if current is None or priority.index(system) < priority.index(current[0]):
+            best[patient_id] = (system, value)
+    return {
+        patient_id: {"label": PATIENT_NUMBER_LABELS[system], "value": value}
+        for patient_id, (system, value) in best.items()
+    }
+
+
 def allocate_patient_number(series, facility, day=None):
     """Returns the next number in the series for the facility's unit, with
     its sequence number: POH-LN-0010294, PRE-LN-0088213 or, counted per day

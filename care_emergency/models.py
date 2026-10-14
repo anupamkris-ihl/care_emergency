@@ -468,3 +468,22 @@ class QuickRegistration(EMRBaseModel):
     form_link_sent_at = models.DateTimeField(null=True, blank=True)
     form_submitted_at = models.DateTimeField(null=True, blank=True)
     form_details = models.JSONField(default=dict, blank=True)
+
+
+class PatientMerge(EMRBaseModel):
+    """One merge of a duplicate patient (source) into the record kept
+    (target), for audit. The source is soft-deleted, and source_snapshot holds
+    what is needed to reverse the merge by hand. Rows are never edited."""
+
+    source = models.ForeignKey(
+        "emr.Patient", on_delete=models.PROTECT, related_name="+"
+    )
+    target = models.ForeignKey(
+        "emr.Patient", on_delete=models.PROTECT, related_name="merged_from"
+    )
+    reason = models.CharField(max_length=500)
+    # Field key -> "source" | "target", for the fields that conflicted.
+    choices = models.JSONField(default=dict)
+    source_snapshot = models.JSONField(default=dict)
+    # Label -> number of the source's records moved to the target.
+    moved = models.JSONField(default=dict)
