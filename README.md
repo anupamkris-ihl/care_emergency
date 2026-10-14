@@ -158,4 +158,4 @@ ADDITIONAL_PLUGS=$PLUGS
 python manage.py migrate care_emergency
 ```
 
-Alternatively, add the plug to `plug_config.py` in a Care fork. That covers both build and runtime, with no env var. Pin `version` to a tag (for example `@v0.10.0`) rather than `@main` for production.
+Alternatively, add the plug to `plug_config.py` in a Care fork. That covers both build and runtime, with no env var. Pin `version` to a tag (for example `@v0.10.1`) rather than `@main` for production.

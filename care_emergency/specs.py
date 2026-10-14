@@ -175,6 +175,8 @@ class EmergencyUpdateSpec(BaseModel):
 
 
 NAME_PART = r"(?=.{2,40}\Z)[A-Za-z]+( [A-Za-z]+)*"
+# A last name can be a single initial.
+LAST_NAME = r"(?=.{1,40}\Z)[A-Za-z]+( [A-Za-z]+)*"
 FULL_NAME = r"[A-Za-z]+( [A-Za-z]+)*"
 PAYER_ID = r"[A-Z0-9/-]{1,24}"
 ABHA_ADDRESS = r"[a-z0-9._]{4,}@(abdm|sbx)"
@@ -399,9 +401,10 @@ class RegistrationSpec(BaseModel):
     def validate_names(self):
         if not re.fullmatch(NAME_PART, self.first_name):
             raise ValueError("The first name must be 2-40 letters with single spaces")
+        if self.last_name and not re.fullmatch(LAST_NAME, self.last_name):
+            raise ValueError("The last name must be 1-40 letters with single spaces")
         for label, value in (
             ("middle name", self.middle_name),
-            ("last name", self.last_name),
             ("guardian's name", self.guardian_name),
             ("next of kin's name", self.next_of_kin_name),
             ("witness's name", self.consent_witness),
