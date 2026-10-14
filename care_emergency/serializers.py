@@ -135,6 +135,7 @@ REGISTRATION_FIELDS = [
     "general_consent",
     "data_processing_consent",
     "tariff_consent",
+    "international_tariff_consent",
     "share_with_referrer_consent",
     "abdm_link_consent",
     "teleconsultation_consent",

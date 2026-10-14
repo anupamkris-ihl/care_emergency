@@ -18,6 +18,13 @@ from care_emergency.models import (
 )
 
 PHONE = "+919812345678"
+INDIAN_ALTERNATE = "+919898989898"
+# What every international registration adds: an Indian alternate mobile and
+# the international tariff consent.
+INTERNATIONAL = {
+    "alternate_phone_number": INDIAN_ALTERNATE,
+    "international_tariff_consent": True,
+}
 
 
 def stage_document(user, category, side="single"):
@@ -192,10 +199,12 @@ class DeskRegistrationTests(CareAPITestBase):
                 vip_note="Embassy guest",
                 vip_authorised_by="Vikram Shah — Centre Manager",
                 handle_with_care=True,
+                **INTERNATIONAL,
             )
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
         record = PatientRegistration.objects.get()
+        self.assertTrue(record.international_tariff_consent)
         self.assertEqual(record.interpreter_language, "Arabic")
         self.assertEqual(record.frro_c_form, "Auto-file within 24 h")
         self.assertTrue(record.is_vip)
@@ -218,6 +227,7 @@ class DeskRegistrationTests(CareAPITestBase):
             "permanent_city": "London",
             "permanent_country": "United Kingdom",
             "permanent_pincode": "NW1 6XE",
+            **INTERNATIONAL,
         }
         oci = {
             "registration_type": "INT",
@@ -229,10 +239,11 @@ class DeskRegistrationTests(CareAPITestBase):
             "address_in_india": "Hotel Pacific, Saket",
             "whatsapp_number": None,
             "payer_type": "International",
+            **INTERNATIONAL,
         }
         self.assert_rejected(
             self.body(**{**oci, "passport_number": ""}),
-            "Enter the nationality and passport number",
+            "Enter the passport number",
         )
         # The government ID stays the Aadhaar; the passport has its own field.
         response = self.register(self.body(**nri))
@@ -251,6 +262,96 @@ class DeskRegistrationTests(CareAPITestBase):
                     "pincode": None,
                 },
                 **oci,
+            )
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+    def foreign_body(self, patient=None, documents=None, **registration):
+        """A foreign national as the International desk screen sends one: the
+        passport comes from the government ID, with no expiry or C-Form."""
+        if documents is None:
+            documents = [
+                stage_document(self.user, "passport"),
+                stage_document(self.user, "visa"),
+            ]
+        return self.body(
+            patient={
+                "phone_number": "+447911123456",
+                "pincode": None,
+                **(patient or {}),
+            },
+            documents=documents,
+            **{
+                "registration_type": "INT",
+                "nationality_category": "Foreign",
+                "nationality": "United Kingdom",
+                "identity_card_type": "passport",
+                "identity_number_last4": "1104",
+                "passport_number": "GBR5521104",
+                "visa_type": "Medical (MED)",
+                "visa_expiry": in_years(1),
+                "address_in_india": "Hotel Pacific, Saket",
+                "whatsapp_number": "+447911123456",
+                "abha_status": "",
+                "abha_address": "",
+                **INTERNATIONAL,
+                **registration,
+            },
+        )
+
+    def test_international_screen_rules(self):
+        cases = [
+            ({"international_tariff_consent": False}, "international tariff"),
+            ({"alternate_phone_number": None}, "Indian alternate mobile"),
+            ({"alternate_phone_number": "+447911123457"}, "Indian alternate mobile"),
+            ({"nationality": ""}, "country of origin"),
+            ({"visa_type": ""}, "visa status"),
+            ({"visa_expiry": None}, "visa validity date"),
+            ({"visa_type": "Not a visa"}, "is not one of"),
+            ({"identity_number_last4": "9999"}, "does not match the ID number"),
+            (
+                {
+                    "nationality_category": "Refugee",
+                    "identity_card_type": "",
+                    "identity_number_last4": "",
+                    "passport_number": "",
+                },
+                "UNHCR card or the passport",
+            ),
+        ]
+        for registration, message in cases:
+            with self.subTest(message=message):
+                self.assert_rejected(self.foreign_body(**registration), message)
+
+        response = self.register(self.foreign_body())
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        record = PatientRegistration.objects.get()
+        self.assertEqual(record.passport_number, "GBR5521104")
+        self.assertIsNone(record.passport_expiry)
+        self.assertEqual(record.frro_c_form, "")
+        self.assertEqual(record.alternate_phone_number, INDIAN_ALTERNATE)
+
+    def test_visa_free_and_refugee_need_no_visa_or_passport(self):
+        response = self.register(
+            self.foreign_body(
+                documents=[stage_document(self.user, "passport")],
+                visa_type="OCI — visa-free",
+                visa_expiry=None,
+            )
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        PatientCreateLock().release()
+        response = self.register(
+            self.foreign_body(
+                patient={"name": "Ahmad Karimi", "phone_number": "+93701234567"},
+                documents=[],
+                nationality_category="Refugee",
+                nationality="Afghanistan",
+                identity_card_type="unhcr_card",
+                identity_number_last4="5521",
+                passport_number="",
+                visa_type="",
+                visa_expiry=None,
             )
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
@@ -678,6 +779,7 @@ class DeskRegistrationTests(CareAPITestBase):
             "nationality_category": "NRI",
             "nationality": "UAE",
             "address_in_india": "Hotel Pacific, Saket",
+            **INTERNATIONAL,
         }
         for passport in ("GBR5521104", "12345678", "AB123456"):
             with self.subTest(passport=passport):

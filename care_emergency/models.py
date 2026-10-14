@@ -204,6 +204,8 @@ class PatientRegistration(EMRBaseModel):
     general_consent = models.BooleanField(default=False)
     data_processing_consent = models.BooleanField(default=False)
     tariff_consent = models.BooleanField(default=False)
+    # International patients: the international tariff and currency explained.
+    international_tariff_consent = models.BooleanField(default=False)
     share_with_referrer_consent = models.BooleanField(default=False)
     abdm_link_consent = models.BooleanField(default=False)
     teleconsultation_consent = models.BooleanField(default=False)
