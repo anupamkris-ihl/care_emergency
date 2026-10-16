@@ -90,15 +90,20 @@ IDENTITY_CARD_TYPES = [
 ]
 ABHA_STATUSES = ["has", "create", "declined", "not_now"]
 VISA_TYPES = [
-    "Medical",
-    "Medical attendant",
+    "Medical (MED)",
+    "Medical attendant (MED-X)",
     "e-Medical",
     "Tourist",
     "Business",
     "Employment",
     "Student",
-    "Not required",
+    "OCI — visa-free",
+    "Nepal / Bhutan",
 ]
+# No visa to date or attach: OCI card holders and Nepal / Bhutan citizens.
+VISA_EXEMPT = ["OCI — visa-free", "Nepal / Bhutan", "Not required"]
+# Values saved before the v15 list; still accepted so old records stay valid.
+LEGACY_VISA_TYPES = ["Medical", "Medical attendant", "Not required"]
 FRRO_C_FORM = [
     "Auto-file within 24 h",
     "Already filed by hotel",

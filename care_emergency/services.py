@@ -19,6 +19,7 @@ from rest_framework.exceptions import ValidationError
 from care_emergency.constants import (
     DOCUMENT_FILE_CATEGORY,
     PATIENT_NUMBER_SYSTEMS,
+    VISA_EXEMPT,
     BookingChannels,
     DocumentCategories,
     DocumentSides,
@@ -358,7 +359,7 @@ def missing_documents(registration, documents, couple=None, partner_documents=()
     if registration.nationality_category == "Foreign":
         if not _complete(documents, DocumentCategories.passport):
             missing.append("the passport")
-        if registration.visa_type != "Not required" and not _complete(
+        if registration.visa_type not in VISA_EXEMPT and not _complete(
             documents, DocumentCategories.visa
         ):
             missing.append("the visa")

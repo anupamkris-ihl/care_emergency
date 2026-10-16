@@ -1,0 +1,538 @@
+<title>HMIS October Delivery Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: a single planning sheet — status strip, day-by-day timeline, then the numbers (deliverables, hours, risks). */
+:root {
+  --bg: #f6f8fb;
+  --surface: #ffffff;
+  --ink: #16202e;
+  --muted: #5b6878;
+  --line: #dde3ec;
+  --line-soft: #edf1f6;
+  --accent: #3462ad;
+  --accent-soft: #e6eef9;
+  --buffer: #e9f4ee;
+  --holiday: #f6e9e9;
+  --ok: #1f7a4d;
+  --warn: #a35a00;
+  --risk: #b4232f;
+  /* one hue per workstream */
+  --ws-plan: #6b7a90;
+  --ws-ux: #8a4fbf;
+  --ws-reg: #3462ad;
+  --ws-appt: #0f8a8a;
+  --ws-bill: #c06a12;
+  --ws-notify: #2e8b3e;
+  --ws-ai: #c2336b;
+  --ws-mobile: #4b5fd1;
+  --ws-qa: #7a6a1c;
+  --font-body: "Public Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141b; --surface: #161d27; --ink: #e6ebf2; --muted: #9aa7b8; --line: #2a3442; --line-soft: #1f2833;
+    --accent: #7ea6ec; --accent-soft: #1d2a40; --buffer: #16281f; --holiday: #2c1d20; --ok: #5cc28e; --warn: #e3a050; --risk: #f07a83;
+    --ws-plan: #8d9bb0; --ws-ux: #b58be0; --ws-reg: #7ea6ec; --ws-appt: #43c2c2; --ws-bill: #e6a05a;
+    --ws-notify: #63c477; --ws-ai: #ec7aa5; --ws-mobile: #8c9bf2; --ws-qa: #cbb75a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141b; --surface: #161d27; --ink: #e6ebf2; --muted: #9aa7b8; --line: #2a3442; --line-soft: #1f2833;
+  --accent: #7ea6ec; --accent-soft: #1d2a40; --buffer: #16281f; --holiday: #2c1d20; --ok: #5cc28e; --warn: #e3a050; --risk: #f07a83;
+  --ws-plan: #8d9bb0; --ws-ux: #b58be0; --ws-reg: #7ea6ec; --ws-appt: #43c2c2; --ws-bill: #e6a05a;
+  --ws-notify: #63c477; --ws-ai: #ec7aa5; --ws-mobile: #8c9bf2; --ws-qa: #cbb75a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 56px;
+}
+.page { max-width: 1180px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(26px, 3.4vw, 34px); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 18px; font-weight: 700; }
+.eyebrow { font: 600 12px/1 var(--font-data); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+
+/* Header */
+header { display: grid; gap: 10px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--muted); font-size: 14px; }
+.meta b { color: var(--ink); font-weight: 600; }
+
+/* Summary strip */
+.summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 4px; min-width: 0; }
+.stat .value { font: 600 22px/1.15 var(--font-data); font-variant-numeric: tabular-nums; }
+.stat .label { font-size: 13px; color: var(--muted); }
+
+/* Sections */
+section { display: grid; gap: 14px; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.scroll { overflow-x: auto; }
+
+/* Calendar notes */
+.calendar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.cal { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0; }
+.cal .k { font: 600 11px/1 var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.cal b { font-size: 14px; font-weight: 600; }
+.cal.holiday { background: var(--holiday); }
+.cal.buffer { background: var(--buffer); }
+
+/* Registration progress */
+.forms { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.form-chip { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 6px; min-width: 0; }
+.form-chip b { font-size: 14px; font-weight: 600; }
+.form-chip .state { font: 600 11px/1 var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; }
+.form-chip.done { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.form-chip.done .state { color: var(--ok); }
+.form-chip.active { border-color: var(--accent); background: var(--accent-soft); }
+.form-chip.active .state { color: var(--accent); }
+.form-chip.next .state { color: var(--muted); }
+.status { font: 600 11px/1 var(--font-data); padding: 5px 8px; border-radius: 999px; white-space: nowrap; }
+.status.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.status.active { color: var(--accent); background: var(--accent-soft); }
+.status.todo { color: var(--muted); background: var(--line-soft); }
+
+/* Team */
+.team { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.member { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+.member-top { display: flex; align-items: center; gap: 10px; }
+.code { font: 600 12px/1 var(--font-data); padding: 6px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
+.member h3 { font-size: 15px; font-weight: 600; }
+.member p { margin: 0; font-size: 13px; color: var(--muted); }
+
+/* Timeline: 19 columns = 13 October days (2 of them holidays) + 6 buffer days in November */
+.gantt { display: grid; grid-template-columns: 220px repeat(19, minmax(40px, 1fr)); min-width: 1000px; }
+.gantt > div { border-bottom: 1px solid var(--line-soft); }
+.g-corner, .g-week, .g-day { font-size: 12px; color: var(--muted); }
+.g-week { font: 600 11px/1 var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; padding: 12px 8px 6px; border-left: 1px solid var(--line); color: var(--ink); }
+.g-week.buffer { background: var(--buffer); color: var(--ok); }
+.g-day { text-align: center; padding: 6px 2px 10px; border-left: 1px solid var(--line-soft); font-family: var(--font-data); line-height: 1.25; }
+.g-day b { display: block; font-size: 13px; color: var(--ink); font-weight: 600; }
+.g-day.holiday { background: var(--holiday); color: var(--risk); }
+.g-day.holiday b { color: var(--risk); }
+.g-day.buffer { background: var(--buffer); }
+.g-label { padding: 10px 14px; display: grid; gap: 2px; align-content: center; }
+.g-label strong { font-size: 14px; font-weight: 600; }
+.g-label span { font: 500 11px/1.2 var(--font-data); color: var(--muted); }
+.g-track {
+  grid-column: 2 / -1; display: grid; grid-template-columns: repeat(19, minmax(40px, 1fr)); align-items: center; padding-block: 10px;
+  /* holidays are columns 4-5, the buffer week columns 14-19 */
+  background: linear-gradient(to right,
+    transparent 0 calc(100% / 19 * 3),
+    var(--holiday) calc(100% / 19 * 3) calc(100% / 19 * 5),
+    transparent calc(100% / 19 * 5) calc(100% / 19 * 13),
+    var(--buffer) calc(100% / 19 * 13) 100%);
+}
+.bar { height: 24px; border-radius: 5px; background: var(--c); color: #fff; font: 600 11px/24px var(--font-data); padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-inline: 2px; }
+.bar.soft { background: color-mix(in srgb, var(--c) 22%, var(--surface)); color: var(--ink); border: 1px dashed var(--c); line-height: 22px; }
+.diamond { justify-self: center; width: 14px; height: 14px; transform: rotate(45deg); background: var(--accent); border-radius: 2px; }
+.diamond.release { background: var(--ok); width: 16px; height: 16px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--muted); padding: 12px 16px; border-top: 1px solid var(--line); }
+.legend i { display: inline-block; width: 18px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+
+/* Milestones */
+.milestones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.ms { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 6px; min-width: 0; }
+.ms .when { font: 600 12px/1 var(--font-data); color: var(--accent); letter-spacing: 0.04em; }
+.ms h3 { font-size: 15px; font-weight: 600; }
+.ms p { margin: 0; font-size: 13px; color: var(--muted); }
+.ms.final { border-color: var(--ok); }
+.ms.final .when { color: var(--ok); }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+th { font: 600 11px/1.2 var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: var(--surface); border-bottom: 1px solid var(--line); }
+tbody tr:last-child td { border-bottom: 0; }
+td ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.ws { display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
+.ws::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--c); flex: none; }
+.owner { font: 500 12px/1.4 var(--font-data); white-space: nowrap; }
+.right { text-align: right; }
+.deliverables { min-width: 960px; }
+.loe { min-width: 640px; }
+.loe td, .loe th { text-align: right; }
+.loe td:first-child, .loe th:first-child { text-align: left; }
+.loe tfoot td { font-weight: 600; border-top: 1px solid var(--line); background: var(--line-soft); }
+.loe tfoot tr.util td { font-weight: 500; background: var(--surface); }
+.meter { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.meter span { display: inline-block; width: 56px; height: 6px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
+.meter span::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--accent); border-radius: 3px; }
+
+/* AI placement */
+.ai-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.ai { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.ai .where { font: 600 11px/1 var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ws-ai); }
+.ai h3 { font-size: 15px; font-weight: 600; }
+.ai p { margin: 0; font-size: 13px; color: var(--muted); }
+.tag { justify-self: start; font: 600 11px/1 var(--font-data); padding: 5px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.tag.build { color: var(--ok); }
+.tag.spec { color: var(--muted); }
+
+/* Risks */
+.risk-level { font: 600 11px/1 var(--font-data); padding: 5px 8px; border-radius: 999px; white-space: nowrap; }
+.risk-level.high { color: var(--risk); background: color-mix(in srgb, var(--risk) 12%, transparent); }
+.risk-level.med { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+
+/* Cadence */
+.cadence { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.cad { border-left: 3px solid var(--accent); padding: 4px 0 4px 12px; display: grid; gap: 2px; }
+.cad b { font-size: 14px; }
+.cad span { font-size: 13px; color: var(--muted); }
+
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+
+@media (max-width: 900px) {
+  .summary, .team, .ai-grid, .cadence, .calendar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .forms { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .milestones { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .summary, .team, .ai-grid, .cadence, .milestones, .calendar { grid-template-columns: minmax(0, 1fr); }
+  .forms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
+
+<div class="page">
+
+  <header>
+    <span class="eyebrow">IHL HMIS · Front Desk Release</span>
+    <h1>October Delivery Plan</h1>
+    <div class="meta">
+      <span>Build <b>Thu 15 – Fri 30 Oct 2026</b></span>
+      <span>Release <b>Fri 30 Oct</b></span>
+      <span>Buffer <b>Mon 2 – Sat 7 Nov</b></span>
+      <span>Team <b>4 people</b></span>
+      <span>Status as of <b>Thu 15 Oct</b></span>
+    </div>
+  </header>
+
+  <div class="summary">
+    <div class="stat"><span class="value">Done</span><span class="label">Kickoff &amp; scope</span></div>
+    <div class="stat"><span class="value">Registration</span><span class="label">Module in progress</span></div>
+    <div class="stat"><span class="value">310 h</span><span class="label">Planned of 352 h in October</span></div>
+    <div class="stat"><span class="value">6 days</span><span class="label">Buffer week · 2 – 7 Nov</span></div>
+  </div>
+
+  <!-- <section aria-labelledby="cal-title">
+    <h2 id="cal-title">Working calendar</h2>
+    <div class="calendar">
+      <div class="cal"><span class="k">October build</span><b>11 working days</b></div>
+      <div class="cal holiday"><span class="k">Holidays</span><b>Mon 19 &amp; Tue 20 Oct</b></div>
+      <div class="cal"><span class="k">Saturdays</span><b>1st &amp; 3rd only · 17 Oct, 7 Nov</b></div>
+      <div class="cal buffer"><span class="k">Buffer</span><b>Mon 2 – Sat 7 Nov</b></div>
+    </div>
+  </section> -->
+
+  <section aria-labelledby="now-title">
+    <div class="section-head">
+      <h2 id="now-title">Registration progress</h2>
+      <span class="muted">Module 1 of 4 · in progress</span>
+    </div>
+    <div class="forms">
+      <div class="form-chip done"><span class="state">Done</span><b>Domestic</b></div>
+      <div class="form-chip done"><span class="state">Done</span><b>Emergency</b></div>
+      <div class="form-chip done"><span class="state">Done</span><b>Quick Register</b></div>
+      <div class="form-chip active"><span class="state">In progress</span><b>International</b></div>
+      <div class="form-chip next"><span class="state">Next</span><b>IVF / ART</b></div>
+      <div class="form-chip next"><span class="state">Next</span><b>New Born</b></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="team-title">
+    <h2 id="team-title">Team</h2>
+    <div class="team">
+      <div class="member">
+        <div class="member-top"><span class="code">AE1</span><h3>AI Engineer 1</h3></div>
+        <p>Registration forms, Billing, AI duplicate check</p>
+      </div>
+      <div class="member">
+        <div class="member-top"><span class="code">AE2</span><h3>AI Engineer 2</h3></div>
+        <p>Appointments, SMS &amp; WhatsApp, AI no-show risk</p>
+      </div>
+      <div class="member">
+        <div class="member-top"><span class="code">FS</span><h3>Full-stack Engineer</h3></div>
+        <p>APIs, mobile app integration, deployment</p>
+      </div>
+      <div class="member">
+        <div class="member-top"><span class="code">UX</span><h3>UI/UX Designer</h3></div>
+        <p>Screen release, design QA, mobile parity</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="timeline-title">
+    <div class="section-head">
+      <h2 id="timeline-title">Timeline</h2>
+      <span class="muted">Working days only · kickoff done before 15 Oct</span>
+    </div>
+    <div class="panel">
+      <div class="scroll">
+        <div class="gantt" role="table" aria-label="Day-by-day timeline">
+          <div class="g-corner"></div>
+          <div class="g-week" style="grid-column: span 3">Week 1</div>
+          <div class="g-week" style="grid-column: span 5">Week 2</div>
+          <div class="g-week" style="grid-column: span 5">Week 3</div>
+          <div class="g-week buffer" style="grid-column: span 6">Buffer · Nov</div>
+
+          <div class="g-corner"></div>
+          <div class="g-day">Thu<b>15</b></div>
+          <div class="g-day">Fri<b>16</b></div>
+          <div class="g-day">Sat<b>17</b></div>
+          <div class="g-day holiday">Mon<b>19</b></div>
+          <div class="g-day holiday">Tue<b>20</b></div>
+          <div class="g-day">Wed<b>21</b></div>
+          <div class="g-day">Thu<b>22</b></div>
+          <div class="g-day">Fri<b>23</b></div>
+          <div class="g-day">Mon<b>26</b></div>
+          <div class="g-day">Tue<b>27</b></div>
+          <div class="g-day">Wed<b>28</b></div>
+          <div class="g-day">Thu<b>29</b></div>
+          <div class="g-day">Fri<b>30</b></div>
+          <div class="g-day buffer">Mon<b>2</b></div>
+          <div class="g-day buffer">Tue<b>3</b></div>
+          <div class="g-day buffer">Wed<b>4</b></div>
+          <div class="g-day buffer">Thu<b>5</b></div>
+          <div class="g-day buffer">Fri<b>6</b></div>
+          <div class="g-day buffer">Sat<b>7</b></div>
+
+          <div class="g-label"><strong>UI/UX screen release</strong><span>UX</span></div>
+          <div class="g-track"><div class="bar" style="--c: var(--ws-ux); grid-column: 1 / 7">Design hand-off</div><div class="bar soft" style="--c: var(--ws-ux); grid-column: 7 / 14">Design QA</div></div>
+
+          <div class="g-label"><strong>Registration module</strong><span>AE1 · FS · UX · in progress</span></div>
+          <div class="g-track"><div class="bar" style="--c: var(--ws-reg); grid-column: 1 / 9">In progress</div><div class="bar soft" style="--c: var(--ws-reg); grid-column: 9 / 11">Fix</div></div>
+
+          <div class="g-label"><strong>Appointment module</strong><span>AE2 · FS · UX</span></div>
+          <div class="g-track"><div class="bar" style="--c: var(--ws-appt); grid-column: 3 / 11">Build</div><div class="bar soft" style="--c: var(--ws-appt); grid-column: 11 / 12">Fix</div></div>
+
+          <div class="g-label"><strong>Billing module</strong><span>AE1 · FS · UX</span></div>
+          <div class="g-track"><div class="bar" style="--c: var(--ws-bill); grid-column: 3 / 12">Build</div><div class="bar soft" style="--c: var(--ws-bill); grid-column: 12 / 13">Fix</div></div>
+
+          <div class="g-label"><strong>SMS &amp; WhatsApp</strong><span>AE2 · FS · UX</span></div>
+          <div class="g-track"><div class="bar soft" style="--c: var(--ws-notify); grid-column: 2 / 4">Templates</div><div class="bar" style="--c: var(--ws-notify); grid-column: 6 / 12">Build</div></div>
+
+          <div class="g-label"><strong>AI analysis</strong><span>AE1 · AE2 · UX</span></div>
+          <div class="g-track"><div class="bar soft" style="--c: var(--ws-ai); grid-column: 2 / 7">Discovery</div><div class="bar" style="--c: var(--ws-ai); grid-column: 7 / 13">Pilot</div><div class="bar soft" style="--c: var(--ws-ai); grid-column: 14 / 17">Nov specs</div></div>
+
+          <div class="g-label"><strong>Mobile app sync</strong><span>FS · AE2 · UX</span></div>
+          <div class="g-track"><div class="bar soft" style="--c: var(--ws-mobile); grid-column: 2 / 3">API</div><div class="bar" style="--c: var(--ws-mobile); grid-column: 3 / 13">Integration &amp; changes</div></div>
+
+          <div class="g-label"><strong>QA, UAT &amp; release</strong><span>All</span></div>
+          <div class="g-track"><div class="bar soft" style="--c: var(--ws-qa); grid-column: 9 / 12">Testing</div><div class="bar" style="--c: var(--ws-qa); grid-column: 12 / 14">UAT · Go-live</div></div>
+
+          <div class="g-label"><strong>Buffer week</strong><span>All · fixes &amp; support</span></div>
+          <div class="g-track"><div class="bar soft" style="--c: var(--ok); grid-column: 14 / 20">Fixes · hypercare · spill-over</div></div>
+
+          <div class="g-label"><strong>Milestones</strong><span>M1 – M7</span></div>
+          <div class="g-track">
+            <div class="diamond" style="grid-column: 2" title="M1 · Fri 16 Oct"></div>
+            <div class="diamond" style="grid-column: 6" title="M2 · Wed 21 Oct"></div>
+            <div class="diamond" style="grid-column: 8" title="M3 · Fri 23 Oct"></div>
+            <div class="diamond" style="grid-column: 10" title="M4 · Tue 27 Oct"></div>
+            <div class="diamond" style="grid-column: 12" title="M5 · Thu 29 Oct"></div>
+            <div class="diamond release" style="grid-column: 13" title="M6 · Fri 30 Oct"></div>
+            <div class="diamond release" style="grid-column: 19" title="M7 · Sat 7 Nov"></div>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i style="background: var(--accent)"></i>Solid · main work</span>
+        <span><i style="background: var(--accent-soft); border: 1px dashed var(--accent)"></i>Dashed · prep or fixes</span>
+        <span><i style="background: var(--holiday)"></i>Holiday</span>
+        <span><i style="background: var(--buffer)"></i>Buffer week</span>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="ms-title">
+    <h2 id="ms-title">Milestones</h2>
+    <div class="milestones">
+      <div class="ms"><span class="when">M1 · FRI 16 OCT</span><h3>API contract frozen</h3><p>Mobile team signs off the API list. Kickoff and scope are done.</p></div>
+      <div class="ms"><span class="when">M2 · WED 21 OCT</span><h3>All screens handed off</h3><p>Registration, appointment, billing and message templates.</p></div>
+      <div class="ms"><span class="when">M3 · FRI 23 OCT</span><h3>Registration complete</h3><p>Domestic, International, Emergency, Quick, IVF/ART, New Born.</p></div>
+      <div class="ms"><span class="when">M4 · TUE 27 OCT</span><h3>Appointments &amp; messages on staging</h3><p>Booking, reminders, SMS and WhatsApp live on staging.</p></div>
+      <div class="ms"><span class="when">M5 · THU 29 OCT</span><h3>Billing &amp; AI pilot on staging · UAT</h3><p>Front-desk team tests end to end.</p></div>
+      <div class="ms final"><span class="when">M6 · FRI 30 OCT</span><h3>Production release</h3><p>Go-live, mobile app build aligned.</p></div>
+      <div class="ms final"><span class="when">M7 · SAT 7 NOV</span><h3>Buffer week closed</h3><p>Fixes done, hypercare over, November specs ready.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="del-title">
+    <h2 id="del-title">Deliverables</h2>
+    <div class="panel scroll">
+      <table class="deliverables">
+        <thead>
+          <tr><th>Workstream</th><th>Status</th><th>What we deliver</th><th>Owners</th><th>Dates</th><th class="right">LOE</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="ws" style="--c: var(--ws-reg)">Registration</span></td>
+            <td><span class="status active">In progress</span></td>
+            <td><ul><li>Domestic, Emergency, Quick Register: done</li><li>International: in progress, testing next</li><li>IVF/ART couple and New Born tabs: to build</li><li>UHID, documents and consent checks on every form</li></ul></td>
+            <td class="owner">AE1 · FS · UX</td><td class="num">15 – 27 Oct</td><td class="num right">54 h</td>
+          </tr>
+          <tr>
+            <td><span class="ws" style="--c: var(--ws-appt)">Appointments</span></td>
+            <td><span class="status todo">Not started</span></td>
+            <td><ul><li>Book by doctor or department, slot view</li><li>Walk-in, reschedule, cancel</li><li>Check-in creates the visit</li></ul></td>
+            <td class="owner">AE2 · FS · UX</td><td class="num">17 – 28 Oct</td><td class="num right">50 h</td>
+          </tr>
+          <tr>
+            <td><span class="ws" style="--c: var(--ws-bill)">Billing</span></td>
+            <td><span class="status todo">Not started</span></td>
+            <td><ul><li>Screens from the UI/UX release</li><li>Payer-based tariff and concession</li><li>Invoice, payment and receipt</li></ul></td>
+            <td class="owner">AE1 · FS · UX</td><td class="num">17 – 29 Oct</td><td class="num right">58 h</td>
+          </tr>
+          <tr>
+            <td><span class="ws" style="--c: var(--ws-notify)">SMS &amp; WhatsApp</span></td>
+            <td><span class="status todo">Not started</span></td>
+            <td><ul><li>Messages: registration (UHID), booking, 2-hour reminder, bill</li><li>Respects the patient's Contact On / Do not contact choice</li><li>DLT SMS and WhatsApp templates submitted by Sat 17 Oct</li></ul></td>
+            <td class="owner">AE2 · FS · UX</td><td class="num">16 – 28 Oct</td><td class="num right">34 h</td>
+          </tr>
+          <tr>
+            <td><span class="ws" style="--c: var(--ws-ai)">AI analysis</span></td>
+            <td><span class="status todo">Not started</span></td>
+            <td><ul><li>Where AI fits, agreed per module (see below)</li><li>2 pilots built: duplicate patient check, no-show risk</li><li>2 specs for November, written in the buffer week</li></ul></td>
+            <td class="owner">AE1 · AE2 · UX</td><td class="num">16 Oct – 4 Nov</td><td class="num right">28 h</td>
+          </tr>
+          <tr>
+            <td><span class="ws" style="--c: var(--ws-mobile)">Mobile app sync</span></td>
+            <td><span class="status todo">Not started</span></td>
+            <td><ul><li>Shared API contract and change log</li><li>Login, registration, booking and bill APIs for the app</li><li>Screen parity check with the app</li></ul></td>
+            <td class="owner">FS · AE2 · UX</td><td class="num">16 – 29 Oct</td><td class="num right">40 h</td>
+          </tr>
+          <tr>
+            <td><span class="ws" style="--c: var(--ws-qa)">QA, UAT &amp; release</span></td>
+            <td><span class="status todo">Not started</span></td>
+            <td><ul><li>Test cases and regression run</li><li>UAT with the front desk, sign-off</li><li>Production deploy and release notes</li></ul></td>
+            <td class="owner">All</td><td class="num">26 – 30 Oct</td><td class="num right">34 h</td>
+          </tr>
+          <tr>
+            <td><span class="ws" style="--c: var(--ws-plan)">Planning &amp; syncs</span></td>
+            <td><span class="status active">Ongoing</span></td>
+            <td><ul><li>Kickoff and scope: done</li><li>Daily stand-ups, Friday demos</li></ul></td>
+            <td class="owner">All</td><td class="num">15 – 30 Oct</td><td class="num right">12 h</td>
+          </tr>
+          <tr>
+            <td><span class="ws" style="--c: var(--ok)">Buffer week</span></td>
+            <td><span class="status todo">Reserved</span></td>
+            <td><ul><li>Bug fixes and support after go-live</li><li>Any October work that slips</li><li>AI specs for November</li></ul></td>
+            <td class="owner">All</td><td class="num">2 – 7 Nov</td><td class="num right">192 h free</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="loe-title">
+    <div class="section-head">
+      <h2 id="loe-title">Hours by person </h2>
+      <span class="muted">October: 88 h available per person (11 days)</span>
+    </div>
+    <div class="panel scroll">
+      <table class="loe">
+        <thead>
+          <tr><th>Workstream</th><th>AE1</th><th>AE2</th><th>FS</th><th>UX</th><th>Total</th></tr>
+        </thead>
+        <tbody class="num">
+          <tr><td><span class="ws" style="--c: var(--ws-reg)">Registration</span></td><td>20</td><td>–</td><td>22</td><td>12</td><td>54</td></tr>
+          <tr><td><span class="ws" style="--c: var(--ws-appt)">Appointments</span></td><td>–</td><td>26</td><td>12</td><td>12</td><td>50</td></tr>
+          <tr><td><span class="ws" style="--c: var(--ws-bill)">Billing</span></td><td>32</td><td>–</td><td>10</td><td>16</td><td>58</td></tr>
+          <tr><td><span class="ws" style="--c: var(--ws-notify)">SMS &amp; WhatsApp</span></td><td>–</td><td>22</td><td>6</td><td>6</td><td>34</td></tr>
+          <tr><td><span class="ws" style="--c: var(--ws-ai)">AI analysis</span></td><td>12</td><td>10</td><td>–</td><td>6</td><td>28</td></tr>
+          <tr><td><span class="ws" style="--c: var(--ws-mobile)">Mobile app sync</span></td><td>4</td><td>8</td><td>18</td><td>10</td><td>40</td></tr>
+          <tr><td><span class="ws" style="--c: var(--ws-qa)">QA, UAT &amp; release</span></td><td>8</td><td>8</td><td>10</td><td>8</td><td>34</td></tr>
+          <tr><td><span class="ws" style="--c: var(--ws-plan)">Planning &amp; syncs</span></td><td>3</td><td>3</td><td>3</td><td>3</td><td>12</td></tr>
+        </tbody>
+        <tfoot class="num">
+          <tr><td>Total hours</td><td>79</td><td>77</td><td>81</td><td>73</td><td>310</td></tr>
+          <tr class="util">
+            <td>Load</td>
+            <td><span class="meter">90%<span style="--w: 90%"></span></span></td>
+            <td><span class="meter">88%<span style="--w: 88%"></span></span></td>
+            <td><span class="meter">92%<span style="--w: 92%"></span></span></td>
+            <td><span class="meter">83%<span style="--w: 83%"></span></span></td>
+            <td><span class="meter">88%<span style="--w: 88%"></span></span></td>
+          </tr>
+          <tr class="util">
+            <td>Buffer week</td><td>48</td><td>48</td><td>48</td><td>48</td><td>192</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="ai-title">
+    <h2 id="ai-title">Where AI goes</h2>
+    <div class="ai-grid">
+      <!-- <div class="ai">
+        <span class="where">Registration</span>
+        <h3>Duplicate patient check</h3>
+        <p>Warns before save when name, date of birth and mobile match an existing patient.</p>
+        <span class="tag build">Build this month</span>
+      </div> -->
+      <div class="ai">
+        <span class="where">Appointments</span>
+        <h3>No-show risk</h3>
+        <p>Suggestion for doctor </p>
+        <span class="tag build">Build this month</span>
+      </div>
+      <div class="ai">
+        <span class="where">Registration</span>
+        <h3>Capture ID</h3>
+        <p>Reads Aadhaar or passport photo and fills the identity fields.</p>
+        <span class="tag spec">Build this month</span>
+      </div>
+      <div class="ai">
+        <span class="where">Billing</span>
+        <h3>Bill check</h3>
+        <p>Flags a tariff or payer that doesn't match the patient's registration.</p>
+        <span class="tag spec">Spec in buffer week</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- <section aria-labelledby="risk-title">
+    <h2 id="risk-title">Risks</h2>
+    <div class="panel scroll">
+      <table style="min-width: 640px">
+        <thead><tr><th>Risk</th><th>Level</th><th>What we do</th></tr></thead>
+        <tbody>
+          <tr><td>Two holidays shorten week 2</td><td><span class="risk-level high">High</span></td><td>Sat 17 Oct is a working day; spill-over moves to the buffer week, release stays 30 Oct.</td></tr>
+          <tr><td>Billing screens arrive late</td><td><span class="risk-level high">High</span></td><td>Screens due Wed 21 Oct; build APIs first from current flow.</td></tr>
+          <tr><td>WhatsApp and DLT SMS template approval takes days</td><td><span class="risk-level high">High</span></td><td>Submit templates by Sat 17 Oct; test on sandbox meanwhile.</td></tr>
+          <tr><td>Mobile team needs API changes late</td><td><span class="risk-level med">Medium</span></td><td>Freeze contract on 16 Oct; changes go through the change log.</td></tr>
+          <tr><td>AI pilot data is thin</td><td><span class="risk-level med">Medium</span></td><td>Start rule-based, switch on the model once data is enough.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section> -->
+
+  <!-- <section aria-labelledby="cad-title">
+    <h2 id="cad-title">Working rhythm</h2>
+    <div class="cadence">
+      <div class="cad"><b>Daily stand-up</b><span>10:00 · 15 min</span></div>
+      <div class="cad"><b>Mobile team sync</b><span>Tue &amp; Fri · 30 min</span></div>
+      <div class="cad"><b>Design review</b><span>Mon &amp; Thu · 30 min</span></div>
+      <div class="cad"><b>Demo</b><span>Every Friday · 45 min</span></div>
+    </div>
+  </section> -->
+
+  <footer>LOE in hours at 8 h per working day. October has 11 working days (holidays 19–20 Oct; only 1st and 3rd Saturdays work). Planned 310 h of 352 h; the buffer week of 2–7 Nov adds 192 h for fixes and spill-over.</footer>
+
+</div>

@@ -28,6 +28,7 @@ from care_emergency.constants import (
     IDENTITY_CARD_TYPES,
     INTERNATIONAL_TYPES,
     LANGUAGES,
+    LEGACY_VISA_TYPES,
     MARITAL_STATUSES,
     MLC_NATURES,
     MOBILE_OWNERS,
@@ -50,6 +51,7 @@ from care_emergency.constants import (
     STAFF_PAYERS,
     TITLES,
     UNIT_CODE_PATTERN,
+    VISA_EXEMPT,
     VISA_TYPES,
     BookingChannels,
     CaptureMethods,
@@ -235,7 +237,7 @@ REGISTRATION_CHOICES = {
     "nationality_category": (NATIONALITY_CATEGORIES, False),
     "identity_card_type": (IDENTITY_CARD_TYPES, True),
     "abha_status": (ABHA_STATUSES, True),
-    "visa_type": (VISA_TYPES, True),
+    "visa_type": ([*VISA_TYPES, *LEGACY_VISA_TYPES], True),
     "frro_c_form": (FRRO_C_FORM, True),
     "allergy_status": (ALLERGY_STATUSES, False),
     "pregnancy_status": (PREGNANCY_STATUSES, True),
@@ -344,6 +346,7 @@ class RegistrationSpec(BaseModel):
     general_consent: bool
     data_processing_consent: bool
     tariff_consent: bool
+    international_tariff_consent: bool = False
     share_with_referrer_consent: bool = False
     abdm_link_consent: bool = False
     teleconsultation_consent: bool = False
@@ -452,9 +455,20 @@ class RegistrationSpec(BaseModel):
         if self.abha_status == "has" and not (self.abha_number or self.abha_address):
             raise ValueError("Enter the ABHA number or address")
         if international:
-            if not self.nationality or not self.passport_number:
-                raise ValueError("Enter the nationality and passport number")
-            if self.nationality_category in ("Foreign", "NRI") and not (
+            if not self.nationality:
+                raise ValueError("Select the country of origin")
+            # A refugee proves identity with the UNHCR card instead of a passport.
+            if self.nationality_category == "Refugee":
+                if self.identity_card_type not in ("unhcr_card", "passport"):
+                    raise ValueError("A refugee needs the UNHCR card or the passport")
+            elif not self.passport_number:
+                raise ValueError("Enter the passport number")
+            if self.identity_card_type == "passport" and not (
+                self.passport_number
+                and self.passport_number.endswith(self.identity_number_last4)
+            ):
+                raise ValueError("The passport number does not match the ID number")
+            if self.nationality_category in ("Foreign", "NRI", "Refugee") and not (
                 self.address_in_india
             ):
                 raise ValueError("Enter the address in India")
@@ -464,13 +478,13 @@ class RegistrationSpec(BaseModel):
             and not re.fullmatch(INDIAN_PASSPORT, self.passport_number)
         ):
             raise ValueError("An Indian passport number looks like A1234567")
+        # Passport expiry and the C-Form are optional: the desk screen has no
+        # fields for them.
         if self.nationality_category == "Foreign":
-            if not self.passport_expiry or not self.visa_type or not self.frro_c_form:
-                raise ValueError(
-                    "Enter the passport expiry, visa and C-Form for a foreign national"
-                )
-            if self.visa_type != "Not required" and not self.visa_expiry:
-                raise ValueError("Enter the visa expiry date")
+            if not self.visa_type:
+                raise ValueError("Select the visa status for a foreign national")
+            if self.visa_type not in VISA_EXEMPT and not self.visa_expiry:
+                raise ValueError("Enter the visa validity date")
         for label, value in (
             ("passport", self.passport_expiry),
             ("visa", self.visa_expiry),
@@ -498,6 +512,13 @@ class RegistrationSpec(BaseModel):
         ):
             raise ValueError(
                 "General, DPDP notice and tariff consents are all required"
+            )
+        if (
+            self.registration_type in INTERNATIONAL_TYPES
+            and not self.international_tariff_consent
+        ):
+            raise ValueError(
+                "Explain the international tariff and currency, and record the consent"
             )
         return self
 
@@ -814,6 +835,16 @@ class DeskRegisterSpec(BaseModel):
                 raise ValueError("Enter an email address for email communication")
         pin = self.patient.get("pincode")
         domestic = registration.registration_type not in INTERNATIONAL_TYPES
+        # International patients may give a foreign main or WhatsApp number,
+        # but always an Indian alternate the hospital can call or text.
+        if (
+            not domestic
+            and registration.mobile_owner != "No phone"
+            and not str(registration.alternate_phone_number or "").startswith("+91")
+        ):
+            raise ValueError(
+                "Enter an Indian alternate mobile for an international patient"
+            )
         if (domestic or pin is not None) and (
             isinstance(pin, bool) or not re.fullmatch(r"[1-9]\d{5}", str(pin))
         ):

@@ -383,6 +383,7 @@ FIELDS = [
             R("general_consent", "General"),
             R("data_processing_consent", "Data processing"),
             R("tariff_consent", "Tariff"),
+            R("international_tariff_consent", "International tariff"),
             R("share_with_referrer_consent", "Share with referrer"),
             R("abdm_link_consent", "ABDM linking"),
             R("teleconsultation_consent", "Teleconsultation"),
