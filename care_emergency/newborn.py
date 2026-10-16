@@ -45,6 +45,7 @@ INHERITED_FIELDS = [
     "general_consent",
     "data_processing_consent",
     "tariff_consent",
+    "international_tariff_consent",
     "communication_channels",
     "do_not_contact",
 ]

@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('care_emergency', '0011_patient_merge'),
+        ('care_emergency', '0012_international_tariff_consent'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
