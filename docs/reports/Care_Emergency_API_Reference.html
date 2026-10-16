@@ -1,0 +1,972 @@
+<title>Care Emergency API Reference</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: sticky contents rail on the left, endpoint sheets on the right; each endpoint reads Purpose → Who → Send → Returns → Errors. */
+:root {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --ink: #142033;
+  --muted: #5a6779;
+  --line: #dbe2eb;
+  --line-soft: #edf1f6;
+  --accent: #3462ad;
+  --accent-soft: #e7eef9;
+  --code-bg: #f0f3f8;
+  --get: #1f7a4d;
+  --post: #3462ad;
+  --put: #9a5b00;
+  --patch: #7a3fb0;
+  --delete: #b4232f;
+  --e4xx: #b4232f;
+  --e403: #9a5b00;
+  --e404: #5a6779;
+  --note: #fff6e0;
+  --note-line: #e7c46d;
+  --font-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e131a; --surface: #151c26; --ink: #e5eaf1; --muted: #9aa6b6; --line: #2a3443; --line-soft: #1e2632;
+    --accent: #80a8ee; --accent-soft: #1c2940; --code-bg: #1b2330;
+    --get: #5cc28e; --post: #80a8ee; --put: #e3a050; --patch: #c29be8; --delete: #f07a83;
+    --e4xx: #f07a83; --e403: #e3a050; --e404: #9aa6b6; --note: #2a2414; --note-line: #8a7230;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #151c26; --ink: #e5eaf1; --muted: #9aa6b6; --line: #2a3443; --line-soft: #1e2632;
+  --accent: #80a8ee; --accent-soft: #1c2940; --code-bg: #1b2330;
+  --get: #5cc28e; --post: #80a8ee; --put: #e3a050; --patch: #c29be8; --delete: #f07a83;
+  --e4xx: #f07a83; --e403: #e3a050; --e404: #9aa6b6; --note: #2a2414; --note-line: #8a7230;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.55 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 64px;
+}
+.shell { max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 36px; align-items: start; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+code, .mono { font-family: var(--font-code); font-size: 0.86em; }
+:not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Contents rail */
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); max-height: calc(100vh - 32px); overflow-y: auto; display: grid; gap: 14px; font-size: 14px; }
+.toc .brand { font: 600 12px/1.2 var(--font-code); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.toc input { width: 100%; font: 15px var(--font-body); padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.toc li a { display: block; padding: 5px 8px; border-radius: 6px; color: var(--ink); text-decoration: none; }
+.toc li a:hover { background: var(--accent-soft); color: var(--accent); }
+.toc .group { font: 600 11px/1 var(--font-code); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 10px 8px 4px; }
+
+main { display: grid; gap: 40px; min-width: 0; }
+
+/* Intro */
+.intro { display: grid; gap: 12px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.intro h1 { font-size: clamp(28px, 3.6vw, 38px); font-weight: 700; letter-spacing: -0.01em; }
+.intro p { margin: 0; max-width: 68ch; color: var(--muted); }
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.fact { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; min-width: 0; }
+.fact b { font: 600 22px/1.15 var(--font-code); }
+.fact span { color: var(--muted); font-size: 14px; }
+
+/* Sections */
+section.part { display: grid; gap: 18px; scroll-margin-top: 16px; }
+.part > header { display: grid; gap: 6px; }
+.part > header .eyebrow { font: 600 12px/1 var(--font-code); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.part > header h2 { font-size: 26px; font-weight: 700; }
+.part > header p { margin: 0; color: var(--muted); max-width: 72ch; }
+h3.group-title { font-size: 19px; font-weight: 700; padding-top: 6px; scroll-margin-top: 16px; }
+
+/* Endpoint sheet */
+.ep { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; display: grid; min-width: 0; scroll-margin-top: 16px; }
+.ep-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line-soft); }
+.m { font: 700 12px/1 var(--font-code); padding: 6px 8px; border-radius: 5px; color: var(--surface); letter-spacing: 0.04em; }
+.m.get { background: var(--get); } .m.post { background: var(--post); } .m.put { background: var(--put); } .m.patch { background: var(--patch); } .m.delete { background: var(--delete); }
+.path { font: 600 15px/1.4 var(--font-code); overflow-wrap: anywhere; min-width: 0; }
+.badge { font: 600 11px/1 var(--font-code); padding: 5px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.badge.public { color: var(--put); border-color: currentColor; }
+.ep-body { padding: 14px 18px 16px; display: grid; gap: 12px; }
+.purpose { margin: 0; font-size: 16px; }
+.rows { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+.rows dt { font: 600 12px/1.9 var(--font-code); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.rows dd { margin: 0; min-width: 0; }
+.rows ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.errs { width: 100%; border-collapse: collapse; font-size: 15px; }
+.errs td { padding: 7px 10px; border-top: 1px solid var(--line-soft); vertical-align: top; }
+.errs td:first-child { width: 64px; white-space: nowrap; }
+.s { font: 700 12px/1 var(--font-code); padding: 4px 7px; border-radius: 5px; display: inline-block; }
+.s.c400 { color: var(--e4xx); background: color-mix(in srgb, var(--e4xx) 12%, transparent); }
+.s.c403 { color: var(--e403); background: color-mix(in srgb, var(--e403) 12%, transparent); }
+.s.c404, .s.c415, .s.c429, .s.c405 { color: var(--e404); background: color-mix(in srgb, var(--e404) 14%, transparent); }
+.errs-wrap { border: 1px solid var(--line-soft); border-radius: 8px; overflow-x: auto; }
+.errs-title { font: 600 12px/1 var(--font-code); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+
+/* Callouts and tables */
+.note { background: var(--note); border: 1px solid var(--note-line); border-radius: 10px; padding: 12px 16px; display: grid; gap: 6px; }
+.note b { font-size: 15px; }
+.note p, .note ul { margin: 0; }
+.note ul { padding-left: 18px; display: grid; gap: 4px; }
+.table-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
+table.plain { width: 100%; border-collapse: collapse; font-size: 15px; min-width: 640px; }
+table.plain th { text-align: left; font: 600 11px/1.2 var(--font-code); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 11px 14px; border-bottom: 1px solid var(--line); }
+table.plain td { padding: 10px 14px; border-top: 1px solid var(--line-soft); vertical-align: top; }
+pre { margin: 0; background: var(--code-bg); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 13px/1.55 var(--font-code); }
+.flow { margin: 0; padding-left: 22px; display: grid; gap: 8px; }
+.flow li { padding-left: 4px; }
+.flow .mono { color: var(--muted); }
+.hidden-by-search { display: none !important; }
+.empty-search { color: var(--muted); }
+
+@media (max-width: 960px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  nav.toc { position: static; max-height: none; }
+  .toc ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .rows { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .rows dd { margin-bottom: 8px; }
+  .toc ol { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+
+<div class="shell">
+
+<nav class="toc" aria-label="Contents">
+  <span class="brand">care_emergency · API</span>
+  <label for="api-search" class="group" style="padding: 0">Find an endpoint</label>
+  <input id="api-search" type="search" placeholder="e.g. passport, uhid, 403" autocomplete="off">
+  <ol>
+    <li class="group">Start here</li>
+    <li><a href="#basics">How calls work</a></li>
+    <li><a href="#errors">Error format</a></li>
+    <li><a href="#flow">Registration flow map</a></li>
+    <li class="group">Plug APIs</li>
+    <li><a href="#p-emergency">Emergency</a></li>
+    <li><a href="#p-desk">Desk registration</a></li>
+    <li><a href="#p-docs">Documents</a></li>
+    <li><a href="#p-setup">Facility setup</a></li>
+    <li><a href="#p-numbers">Patient numbers</a></li>
+    <li><a href="#p-appt">Appointments</a></li>
+    <li><a href="#p-quick">Quick registration</a></li>
+    <li><a href="#p-patients">Merge &amp; restricted</a></li>
+    <li><a href="#p-pincode">Pincode</a></li>
+    <li><a href="#p-billing">Billing rules</a></li>
+    <li class="group">Care core APIs</li>
+    <li><a href="#c-auth">Login &amp; session</a></li>
+    <li><a href="#c-facility">Users &amp; facility</a></li>
+    <li><a href="#c-patients">Patients</a></li>
+    <li><a href="#c-files">Identifiers &amp; files</a></li>
+    <li><a href="#c-sched">Encounters &amp; scheduling</a></li>
+    <li class="group">More</li>
+    <li><a href="#local">Next.js routes</a></li>
+    <li><a href="#review">Points to review</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section class="intro" aria-labelledby="page-title">
+  <span class="part-eyebrow mono" style="color: var(--accent); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: 12px">IHL HMIS · Registration module</span>
+  <h1 id="page-title">Care Emergency API Reference</h1>
+  <p>Every API the registration screens use: the <code>care_emergency</code> plug's own endpoints, and the Care core endpoints the frontend calls. Each endpoint lists what it does, who can call it, what to send, what comes back, and the errors you can get.</p>
+  <div class="facts">
+    <div class="fact"><b>33</b><span>Plug endpoints</span></div>
+    <div class="fact"><b>24</b><span>Care core endpoints used</span></div>
+    <div class="fact"><b>2</b><span>Public (no login)</span></div>
+    <div class="fact"><b>v0.11</b><span>Plug version documented</span></div>
+  </div>
+</section>
+
+<!-- ============ BASICS ============ -->
+<section class="part" id="basics" aria-labelledby="basics-title">
+  <header><span class="eyebrow">Start here</span><h2 id="basics-title">How calls work</h2></header>
+  <div class="table-wrap">
+    <table class="plain">
+      <thead><tr><th>Item</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Plug base URL</td><td><code>/api/care_emergency/</code> (Care mounts every plug at <code>/api/&lt;plug&gt;/</code>)</td></tr>
+        <tr><td>Care core base URL</td><td><code>/api/v1/</code></td></tr>
+        <tr><td>From the browser</td><td>The frontend calls <code>/care-api/&lt;path&gt;</code>; Next.js forwards it to the backend (<code>CARE_API_ORIGIN</code>, default <code>http://localhost:9000</code>). A trailing slash is always added.</td></tr>
+        <tr><td>Login</td><td><code>Authorization: Bearer &lt;access token&gt;</code> (JWT). Access lasts 10 min, refresh 30 min.</td></tr>
+        <tr><td>Expired token</td><td>Care answers <b>403</b> with <code>"code": "token_not_valid"</code> (not 401). The frontend refreshes once and retries; if refresh fails, the user is signed out.</td></tr>
+        <tr><td>Lists</td><td>Paged with <code>?limit=&amp;offset=</code>; reply is <code>{"count", "results"}</code>.</td></tr>
+        <tr><td>Phone numbers</td><td>E.164, e.g. <code>+919812345678</code>, <code>+447911123456</code>.</td></tr>
+        <tr><td>Patient numbers</td><td>UHID <code>POH-LN-0000001</code>, pre-registration <code>PRE-LN-0000001</code>, unknown patient <code>UNK-LN-20261015-001</code> (<code>LN</code> = facility unit code).</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="part" id="errors" aria-labelledby="errors-title">
+  <header><span class="eyebrow">Start here</span><h2 id="errors-title">Error format</h2><p>All plug views and Care's EMR views use the same error handler, so errors look the same everywhere.</p></header>
+  <div class="table-wrap">
+    <table class="plain">
+      <thead><tr><th>Status</th><th>When</th><th>Body</th></tr></thead>
+      <tbody>
+        <tr><td><span class="s c400">400</span></td><td>A field or rule check failed</td><td><code>{"errors": [{"type": "value_error", "loc": ["registration"], "msg": "Value error, Enter the passport number"}]}</code></td></tr>
+        <tr><td><span class="s c400">400</span></td><td>A check inside the view failed</td><td><code>{"errors": [{"type": "validation_error", "msg": "Set the unit code for this facility first"}]}</code></td></tr>
+        <tr><td><span class="s c403">403</span></td><td>No permission, or not logged in</td><td><code>{"detail": "You do not have access to this facility"}</code></td></tr>
+        <tr><td><span class="s c404">404</span></td><td>Unknown id (or bad UUID)</td><td><code>{"errors": [{"type": "object_not_found", "msg": "No Patient matches the given query."}]}</code></td></tr>
+        <tr><td><span class="s c415">415</span></td><td>Wrong content type (e.g. JSON to a file upload)</td><td>DRF default</td></tr>
+        <tr><td><span class="s c429">429</span></td><td>Too many requests (public form, login)</td><td><code>{"detail": "Request was throttled..."}</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <b>Reading rule messages</b>
+    <ul>
+      <li>Messages from a rule check start with <code>Value error, </code>; the frontend removes that prefix before showing it.</li>
+      <li>A wrong option gives <code>'x' is not one of: a, b, c</code>.</li>
+      <li>Two errors appear on most write endpoints: <code>facility is required</code> (400) and <code>Set the unit code for this facility first</code> (400).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="part" id="flow" aria-labelledby="flow-title">
+  <header><span class="eyebrow">Start here</span><h2 id="flow-title">Registration flow map</h2><p>Which call happens at each step of the front-desk screens.</p></header>
+  <div class="table-wrap" style="padding: 16px 18px">
+    <ol class="flow">
+      <li><b>Sign in</b> <span class="mono">POST /api/v1/auth/login/ → GET /api/v1/users/getcurrentuser/</span></li>
+      <li><b>Search the patient</b> by phone or name <span class="mono">GET /api/v1/patient/?phone_number=</span>, by UHID <span class="mono">GET /api/care_emergency/patients/search/?uhid=</span>, by ABHA <span class="mono">POST /api/v1/patient/search/</span>; numbers and last visit <span class="mono">POST /api/care_emergency/patients/summary/</span></li>
+      <li><b>No match → Add Patient</b>. Address from PIN <span class="mono">GET /api/care_emergency/pincode/&lt;pin&gt;/</span></li>
+      <li><b>Upload documents</b> (passport, visa, payer card) <span class="mono">POST /api/care_emergency/documents/</span> — each returns an id</li>
+      <li><b>Save</b> Domestic / International / IVF <span class="mono">POST /api/care_emergency/registration/</span> with the document ids; New Born <span class="mono">POST /api/care_emergency/newborn/register/</span></li>
+      <li><b>Photo and signed consent</b> <span class="mono">POST /api/v1/files/upload-file/</span></li>
+      <li><b>Emergency</b> <span class="mono">GET /api/care_emergency/desk/ → POST /api/care_emergency/register/</span>; later <span class="mono">POST /api/care_emergency/patients/&lt;id&gt;/convert/</span></li>
+      <li><b>Phone booking</b> <span class="mono">POST /api/care_emergency/quick-registration/</span>; patient fills <span class="mono">/quick-registration/form/&lt;token&gt;/</span></li>
+      <li><b>Book appointment</b> <span class="mono">POST /api/care_emergency/appointments/</span></li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============ PLUG ============ -->
+<section class="part" aria-labelledby="plug-title">
+  <header><span class="eyebrow">Part 1</span><h2 id="plug-title">Plug APIs · /api/care_emergency/</h2><p>Endpoints added by the <code>care_emergency</code> plug. Logged-in users only, except the two texted-form endpoints.</p></header>
+
+  <!-- Emergency -->
+  <h3 class="group-title" id="p-emergency">Emergency</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/register/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Quick emergency registration. Creates the patient (with the desk phone), an emergency encounter and the emergency record in one step.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>Users who can create encounters in the facility, and create patients.</dd>
+        <dt>Send</dt><dd><ul>
+          <li><code>facility</code> (required), <code>triage</code> (required): red, yellow, green, black</li>
+          <li><code>patient</code>: <code>name</code>, <code>gender</code>, <code>date_of_birth</code> or <code>age</code> (0–120)</li>
+          <li><code>is_unidentified</code> (default true — name becomes "Unknown n"), <code>distinguishing_marks</code></li>
+          <li><code>chief_complaint</code> (e.g. Chest pain, Fall), <code>mode_of_arrival</code> (e.g. Walked in, 108 ambulance)</li>
+          <li><code>is_medico_legal</code>, <code>mlc_nature</code>, <code>police_station</code>, <code>brought_by {name, phone_number, relationship}</code></li>
+        </ul></dd>
+        <dt>Returns</dt><dd><code>{patient, encounter, emergency}</code>; emergency includes <code>mlc_number</code> (<code>MLC-2026-0001</code>) and the UNK number for unknown patients.</dd>
+      </dl>
+      <span class="errs-title">Errors</span>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Select the chief complaint · Select the MLC nature · Enter the police station informed</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Enter an estimated age between 0 and 120 · Enter who brought the patient in or their phone number</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Set the emergency desk number for this facility first · Set the unit code for this facility first</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>You do not have permission to create encounter · Cannot Create Patient</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>Unknown facility</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/care_emergency/encounters/?facility=</span></div>
+    <div class="ep-body">
+      <p class="purpose">List a facility's emergency records, newest first.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>Any logged-in user; only encounters they can see are listed.</dd>
+        <dt>Send</dt><dd><code>facility</code> (required). Filters: <code>triage</code>, <code>is_medico_legal</code>, <code>is_unidentified</code>, <code>mlc_number</code>, <code>chief_complaint</code>, <code>mode_of_arrival</code>, <code>patient</code>.</dd>
+        <dt>Returns</dt><dd><code>{count, results: [emergency]}</code></dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>facility is required</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>Unknown facility</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="m patch">PATCH</span><span class="path">/api/care_emergency/encounters/&lt;encounter_id&gt;/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Read or edit one emergency record (looked up by the Care encounter id). Edit triage, MLC details, complaint, arrival mode or brought-by.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>GET: can view the encounter or patient. PATCH: can update the encounter.</dd>
+        <dt>Send</dt><dd>PATCH, all optional: <code>triage</code>, <code>is_medico_legal</code>, <code>mlc_nature</code>, <code>police_station</code>, <code>distinguishing_marks</code>, <code>chief_complaint</code>, <code>mode_of_arrival</code>, <code>brought_by</code>. Turning MLC off keeps the issued MLC number.</dd>
+        <dt>Returns</dt><dd>The emergency record.</dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Select the MLC nature · Enter the police station informed · 'x' is not one of: …</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>You do not have permission to view this encounter · You do not have permission to update encounter</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>No EmergencyEncounter matches the given query.</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/patients/&lt;patient_id&gt;/convert/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Complete an emergency patient's registration: real name and own phone number. Issues the UHID and keeps the UNK number.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>Users who can update the patient (Care's check only).</dd>
+        <dt>Send</dt><dd>Care patient fields; <code>phone_number</code> required. Also <code>name</code>, <code>gender</code>, <code>date_of_birth</code>/<code>age</code>, <code>address</code>, <code>pincode</code>.</dd>
+        <dt>Returns</dt><dd><code>{patient, emergency: [records]}</code></dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>This patient has no emergency registration to convert</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Enter the patient's own phone number · Use the patient's own number, not the emergency desk number</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>Cannot Update Patient</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>Unknown patient</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <!-- Desk registration -->
+  <h3 class="group-title" id="p-desk">Desk registration</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/registration/</span><span class="badge">Domestic · International · IVF</span></div>
+    <div class="ep-body">
+      <p class="purpose">Full front-desk registration. Creates the patient, issues the UHID (or a PRE number), saves all desk details, allergies and attached documents. For IVF it also registers the partner.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>Users who can create patients. "No phone" registrations also need access to the facility.</dd>
+        <dt>Send</dt><dd><ul>
+          <li><code>facility</code>, <code>pre_registration</code> (true → PRE number), <code>documents</code> (up to 20 staged document ids), <code>couple</code> (IVF only)</li>
+          <li><code>patient</code>: <code>name</code>, <code>gender</code>, <code>phone_number</code>, <code>date_of_birth</code> or <code>age</code>, <code>address</code>, <code>pincode</code>, <code>geo_organization</code></li>
+          <li><code>registration</code>, required groups:
+            <ul>
+              <li>Identity — <code>registration_type</code> (DOM, TPA, CORP, STAFF, GOVT, INT, NRI, CPL), <code>title</code>, <code>first_name</code>, <code>preferred_language</code></li>
+              <li>Contact — <code>mobile_owner</code>; optional WhatsApp, alternate mobile, address, next of kin</li>
+              <li>ID — <code>nationality_category</code> (Indian resident, NRI, OCI-PIO, Foreign, Refugee); optional ID type + last 4, ABHA</li>
+              <li>International — <code>nationality</code> (country of origin), <code>passport_number</code>, <code>visa_type</code>, <code>visa_expiry</code>, <code>address_in_india</code></li>
+              <li>Safety — <code>allergy_status</code> (nka, has, unable), <code>allergies</code>, VIP flags</li>
+              <li>Payer — <code>payer_type</code> (Self, Corporate, Insurance/TPA, Govt scheme, Staff, International) + its fields</li>
+              <li>Source — <code>arrival_source</code> (e.g. Walk-in, Outside doctor)</li>
+              <li>Consent — <code>consent_given_by</code>, <code>consent_method</code>, <code>consent_language</code>, <code>general_consent</code>, <code>data_processing_consent</code>, <code>tariff_consent</code>; <code>international_tariff_consent</code> for INT/NRI</li>
+            </ul>
+          </li>
+        </ul></dd>
+        <dt>Returns</dt><dd><code>{patient, registration}</code>; the patient's <code>instance_identifiers</code> carry the UHID.</dd>
+      </dl>
+      <span class="errs-title">Errors — names, contact &amp; consent</span>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>The first name must be 2-40 letters with single spaces · The last name must be 1-40 letters with single spaces · Enter a valid email address</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>The main mobile must have 10 Indian digits starting 6-9 · The alternate mobile must differ from the main number · PIN must be 6 digits and start with 1-9</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Choose the PIN's post office · The post office is not under this PIN · The district and state do not match the PIN · Enter the house, flat or building</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>General, DPDP notice and tariff consents are all required · Enter the witness for a thumb-impression consent · Consent is required to store the ID summary</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>The title does not match the patient's gender and age · List the allergies when, and only when, the patient has allergies · A VIP flag needs a note and who authorised it</td></tr>
+      </tbody></table></div>
+      <span class="errs-title">Errors — international</span>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>The nationality does not match the registration type · Select the country of origin</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Enter the passport number · The passport number does not match the ID number · An Indian passport number looks like A1234567 · A refugee needs the UNHCR card or the passport</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Select the visa status for a foreign national · Enter the visa validity date (not for OCI — visa-free, Nepal / Bhutan) · The visa has expired</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Enter the address in India · Enter an Indian alternate mobile for an international patient · Explain the international tariff and currency, and record the consent</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>The government ID type does not match nationality and age</td></tr>
+      </tbody></table></div>
+      <span class="errs-title">Errors — children, payer, IVF, documents</span>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Patients under 18 need an exact date of birth · Patients under 18 need a guardian and a next of kin · A minor's consent must be given by a parent or guardian · Marital status is not recorded for patients under 18</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Choose the payer · Enter the employee ID · Enter the policy or card number · The policy-holder relationship does not match age and payer</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>The woman must be 21-50 years old for ART · The partner must be 21-55 years old for ART · The ART consent is required · Capture the woman's government ID for IVF / ART</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Upload the payer card (front and back) / the passport / the visa · A document is missing or already used; upload it again</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Set the unit code for this facility first · Patient creation failed, try again after a while</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>Cannot Create Patient · You do not have access to this facility</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/care_emergency/registration/&lt;patient_id&gt;/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Read a patient's desk registration (for the patient page and the edit form).</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>Users who can view the patient.</dd>
+        <dt>Returns</dt><dd>All registration fields, allergies, couple. A restricted patient shows only <code>{restricted: true, alias}</code>.</dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c403">403</span></td><td>You do not have permission to view this patient</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>Unknown patient, or no desk registration</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m patch">PATCH</span><span class="path">/api/care_emergency/patients/&lt;patient_id&gt;/contact/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Add a real mobile number to a patient registered as "No phone".</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>Users who can update the patient.</dd>
+        <dt>Send</dt><dd><code>phone_number</code>, <code>mobile_owner</code> (both required)</dd>
+        <dt>Returns</dt><dd>The patient.</dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Enter a real contact number, not the desk number · This patient already has a contact number · A minor's mobile must belong to a parent, guardian or relative</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>Cannot update this patient · Identity access is required to update a contact</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/newborn/register/</span><span class="badge">New Born</span></div>
+    <div class="ep-body">
+      <p class="purpose">Register a newborn from the mother's record. Called by the New Born tab (added in the latest frontend commit).</p>
+      <dl class="rows">
+        <dt>Note</dt><dd>Request and error details weren't in this review's scope; check the plug's view before relying on them.</dd>
+      </dl>
+    </div>
+  </article>
+
+  <!-- Documents -->
+  <h3 class="group-title" id="p-docs">Documents</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/documents/</span><span class="badge">multipart</span></div>
+    <div class="ep-body">
+      <p class="purpose">Upload an ID, passport, visa or payer card. Without <code>patient</code> it is staged and attached at registration by its id.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>With patient: can update the patient. Without: can create patients.</dd>
+        <dt>Send</dt><dd><code>file</code> (JPEG, PNG, WebP or PDF, up to 5 MB), <code>category</code> (government_id, payer_card, passport, visa, marriage_certificate, previous_prescription, referral_letter, other), <code>side</code> (front, back, single), <code>capture_method</code> (photographed, scanned, uploaded); optional <code>source</code>, <code>document_date</code>, <code>patient</code>.</dd>
+        <dt>Returns</dt><dd>Document <code>{id, category, side, name, mime_type, read_signed_url, …}</code></dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Choose a file · Files can be up to 5 MB · Upload a JPEG, PNG, WebP or PDF · The document date cannot be in the future</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Invalid endpoint — file storage (Silo/S3) isn't configured on the backend</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>Cannot View File · You do not have permission to register patients</td></tr>
+        <tr><td><span class="s c415">415</span></td><td>Sent as JSON instead of multipart</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/care_emergency/documents/?patient=</span></div>
+    <div class="ep-body">
+      <p class="purpose">List a patient's desk documents with signed links to view them.</p>
+      <dl class="rows"><dt>Who</dt><dd>Users who can view clinical data.</dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c403">403</span></td><td>Cannot View File · This patient's documents are restricted</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>Unknown patient</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m delete">DELETE</span><span class="path">/api/care_emergency/documents/&lt;document_id&gt;/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Discard your own staged document that isn't attached yet. Returns 204.</p>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c404">404</span></td><td>Not yours, already attached, or unknown</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <!-- Facility setup -->
+  <h3 class="group-title" id="p-setup">Facility setup</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="m put">PUT</span><span class="path">/api/care_emergency/unit/</span></div>
+    <div class="ep-body">
+      <p class="purpose">The facility's unit code (e.g. <code>LN</code>), printed in every patient and invoice number. Set once; can't change.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>GET: facility access. PUT: facility admins.</dd>
+        <dt>Send</dt><dd>GET <code>?facility=</code>. PUT <code>{facility, code}</code>, code 2–4 capital letters.</dd>
+        <dt>Returns</dt><dd><code>{facility, code, modified_date}</code></dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>The unit code can't be changed once set · Another facility already uses this unit code · code should match pattern</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>You do not have access to this facility · Only facility admins can set the unit code</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>Unit code not set yet</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="m put">PUT</span><span class="path">/api/care_emergency/desk/</span></div>
+    <div class="ep-body">
+      <p class="purpose">The emergency desk's shared phone, used as the phone of unknown patients.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>GET: facility access. PUT: facility admins.</dd>
+        <dt>Send</dt><dd>GET <code>?facility=</code>. PUT <code>{facility, phone_number}</code>.</dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c403">403</span></td><td>You do not have access to this facility · Only facility admins can set the desk number</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>Desk number not set yet</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <!-- Patient numbers -->
+  <h3 class="group-title" id="p-numbers">Patient numbers &amp; search</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/patients/&lt;patient_id&gt;/uhid/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Issue a UHID if the patient has none (e.g. a pre-registration on payment). Safe to call twice.</p>
+      <dl class="rows"><dt>Who</dt><dd>Users who can update the patient.</dd><dt>Send</dt><dd><code>{facility}</code></dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Complete this emergency patient's registration to issue a UHID · Set the unit code for this facility first</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>You do not have permission to update this patient</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/care_emergency/patients/search/?uhid=</span></div>
+    <div class="ep-body">
+      <p class="purpose">Find a patient by exact UHID (any case). A merged-away UHID finds the kept record.</p>
+      <dl class="rows"><dt>Returns</dt><dd><code>{count, results: [patient]}</code> — only patients you can see.</dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Enter the full UHID</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/patients/summary/</span></div>
+    <div class="ep-body">
+      <p class="purpose">For search results: each patient's number and last visit in one call.</p>
+      <dl class="rows">
+        <dt>Send</dt><dd><code>{patients: [1–50 patient ids]}</code></dd>
+        <dt>Returns</dt><dd><code>{results: [{id, patient_number: {label, value}, last_visit}]}</code> — patients you can't see are left out.</dd>
+      </dl>
+    </div>
+  </article>
+
+  <!-- Appointments -->
+  <h3 class="group-title" id="p-appt">Appointments</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/appointments/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Book a slot and save the desk details (visit type, channel, complaint) in one step. Phone bookings get a reminder 2 hours before.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>Users who can create bookings for the doctor.</dd>
+        <dt>Send</dt><dd><code>slot</code>, <code>patient</code>, <code>booking_channel</code> (walk_in, front_desk, phone, online) required; optional <code>consultation_type</code> (in_person, video, home_visit), <code>visit_purpose</code>, <code>guidance_area</code>, <code>guidance_since</code>, <code>red_flags</code>, <code>chief_complaint</code>.</dd>
+        <dt>Returns</dt><dd><code>{booking, details}</code>; details include <code>appointment_number</code> (<code>APT-26-000001</code>).</dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Red flag: send the patient to the emergency desk, not an appointment</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Walk-in bookings can only be made for today · The remaining seats in this session are held for walk-ins</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Slot is already past · Slot is already full · Patient already has a booking for this slot · Patient already has maximum number of appointments (10)</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>You do not have permission to create appointments</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/care_emergency/appointments/?facility=</span></div>
+    <div class="ep-body">
+      <p class="purpose">List desk appointments. Filters: <code>patient</code>, <code>appointment_number</code>, <code>date</code>, <code>booking_channel</code>. <code>/appointments/&lt;booking_id&gt;/</code> reads one.</p>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c403">403</span></td><td>You do not have permission to view bookings · You do not have permission to view this booking</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="m put">PUT</span><span class="path">/api/care_emergency/walk-in-reserve/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Hold one seat in every N of a doctor's session for walk-ins.</p>
+      <dl class="rows"><dt>Send</dt><dd>GET <code>?availability=</code>. PUT <code>{availability, walk_in_every: 2–20}</code>, or <code>null</code> to remove (204).</dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c403">403</span></td><td>You do not have access to this schedule</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>No reserve set</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <!-- Quick registration -->
+  <h3 class="group-title" id="p-quick">Quick registration (phone booking)</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/quick-registration/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Register a caller with a few details and text them a link to fill in the rest (valid 7 days).</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>Facility access and can create patients.</dd>
+        <dt>Send</dt><dd><code>facility</code>, <code>title</code>, <code>first_name</code>, <code>date_of_birth</code>, <code>gender</code>, <code>phone_number</code>, <code>consultation_type</code>, and <code>department</code> or <code>doctor</code>; optional <code>send_form_link</code>.</dd>
+        <dt>Returns</dt><dd><code>{patient, quick_registration}</code> — <code>form_link_sent_at</code> shows whether the SMS went out.</dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Choose a department or a doctor · The doctor does not work at this facility · Enter the patient's own mobile number</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>The title does not match the patient's gender and age · Date of birth must be between 1900 and today</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>You do not have access to this facility</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/quick-registration/&lt;patient_id&gt;/send-link/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Text the form link again; it gets a fresh 7 days. <code>GET /quick-registration/&lt;patient_id&gt;/</code> reads the record and the submitted form.</p>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>The patient has already submitted the form · The patient has no mobile number to text · The message couldn't be sent. Try again later</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="m post">POST</span><span class="path">/api/care_emergency/quick-registration/form/&lt;token&gt;/</span><span class="badge public">Public · 30/min</span></div>
+    <div class="ep-body">
+      <p class="purpose">The patient's own form from the texted link. No login; the token is the key. Also <code>GET …/form/&lt;token&gt;/pincode/&lt;pin&gt;/</code> for address lookup.</p>
+      <dl class="rows">
+        <dt>Send</dt><dd>POST: <code>house</code>, <code>pincode</code>, <code>preferred_language</code> required; optional email, WhatsApp, alternate mobile, address parts, marital status, next of kin.</dd>
+        <dt>Returns</dt><dd>GET <code>{status: open | expired | submitted, first_name, facility_name, phone_last4}</code>; POST <code>{status: "submitted"}</code>.</dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>This form has already been submitted · This link has expired. Please call the hospital for a new one · Enter the next of kin's name</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>This link is no longer open (pincode lookup)</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>Unknown token</td></tr>
+        <tr><td><span class="s c429">429</span></td><td>More than 30 requests a minute</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <!-- Patients -->
+  <h3 class="group-title" id="p-patients">Merge &amp; restricted patients</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="m post">POST</span><span class="path">/api/care_emergency/patients/merge/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Preview (GET) or merge (POST) a duplicate record into the one being kept.</p>
+      <dl class="rows">
+        <dt>Who</dt><dd>Can update both records, and is a superuser or a supervisor at the facility.</dd>
+        <dt>Send</dt><dd>GET <code>?source=&amp;target=</code>. POST <code>{source, target, reason, choices: {field: "source" | "target"}}</code>.</dd>
+        <dt>Returns</dt><dd>GET: both records, conflicting fields, what moves, blockers. POST: <code>{patient, moved}</code>.</dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Choose two different records · Both records have an open billing account … · Complete the kept record's emergency registration before merging</td></tr>
+        <tr><td><span class="s c400">400</span></td><td>Choose which &lt;field&gt; to keep · Another registration is being saved, try again in a moment</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>You do not have permission to merge these records</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/care_emergency/restricted/&lt;patient_id&gt;/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Is the patient under statutory confidentiality (MTP, POCSO, HIV…)? Restricted patients show an alias like <code>PT-7K2M9Q</code>.</p>
+      <div class="errs-wrap"><table class="errs"><tbody><tr><td><span class="s c403">403</span></td><td>You do not have permission to view this patient</td></tr></tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="m post">POST</span><span class="path">/api/care_emergency/restricted/&lt;patient_id&gt;/flags/</span></div>
+    <div class="ep-body">
+      <p class="purpose">The treating clinician raises a statutory flag on an open encounter. GET lists encounters they can flag.</p>
+      <dl class="rows"><dt>Send</dt><dd><code>{encounter, category}</code> — mtp, pocso, hiv, mental_health, sexual_assault, substance_use</dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Statutory flags require an open encounter</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>Only the treating clinician can raise a statutory flag</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/care_emergency/restricted/&lt;patient_id&gt;/break-glass/</span></div>
+    <div class="ep-body">
+      <p class="purpose">See a restricted patient's identity for 1 hour. The reason is audited.</p>
+      <dl class="rows"><dt>Send</dt><dd><code>{reason}</code>, 10–500 characters</dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody><tr><td><span class="s c400">400</span></td><td>This patient is not restricted · reason too short or long</td></tr></tbody></table></div>
+    </div>
+  </article>
+
+  <!-- Pincode -->
+  <h3 class="group-title" id="p-pincode">Pincode</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/care_emergency/pincode/&lt;pin&gt;/</span></div>
+    <div class="ep-body">
+      <p class="purpose">District, state and post offices for an Indian PIN, from the India Post directory.</p>
+      <dl class="rows"><dt>Returns</dt><dd><code>{country: "India", state, district, localities: [post offices]}</code></dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Enter a 6-digit PIN code.</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>PIN code not found. · The PIN directory hasn't been loaded. (the frontend then uses a live lookup)</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <!-- Billing -->
+  <h3 class="group-title" id="p-billing">Billing rules</h3>
+  <div class="note">
+    <b>No billing endpoints in the plug</b>
+    <p>The plug adds checks to Care's own charge item, invoice and payment APIs (only in facilities with a unit code). Numbers look like <code>INV/LN/26/00001</code> (also CN, RCT, ADV, RFD). Errors you may see from those Care APIs:</p>
+    <ul>
+      <li>Quantity must be a whole number from 1 to 20 · Amounts are whole rupees, up to 7 digits</li>
+      <li>A refund needs its cause · A refund needs a reason · A patient-caused refund above ₹500 needs a supervisor</li>
+      <li>An advance needs its purpose · Complete the patient's registration first</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ CARE CORE ============ -->
+<section class="part" aria-labelledby="core-title">
+  <header><span class="eyebrow">Part 2</span><h2 id="core-title">Care core APIs · /api/v1/</h2><p>Care's own endpoints that the frontend calls. Patients are never created here directly; creation goes through the plug.</p></header>
+
+  <h3 class="group-title" id="c-auth">Login &amp; session</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/v1/auth/login/</span><span class="badge public">No token</span></div>
+    <div class="ep-body">
+      <p class="purpose">Sign in with username and password.</p>
+      <dl class="rows">
+        <dt>Send</dt><dd><code>{username, password}</code></dd>
+        <dt>Returns</dt><dd><code>{access, refresh}</code>, or <code>{temp_token}</code> when two-factor login is on.</dd>
+      </dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>This field is required (username or password missing)</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>No active account found with the given credentials · Too Many Requests Provide Captcha</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/v1/mfa/login/</span><span class="badge public">No token</span></div>
+    <div class="ep-body">
+      <p class="purpose">Finish a two-factor login with the authenticator or a backup code.</p>
+      <dl class="rows"><dt>Send</dt><dd><code>{method: "totp" | "backup", code, temp_token}</code></dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Invalid TOTP code · Invalid or already used backup code · Invalid login method</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>Temp token is invalid or expired</td></tr>
+        <tr><td><span class="s c429">429</span></td><td>Too Many Requests. Please try again later.</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/v1/auth/token/refresh/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Get a new access token (and a new refresh token). The frontend calls it automatically when a call fails with an expired token.</p>
+      <dl class="rows"><dt>Send</dt><dd><code>{refresh}</code></dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c403">403</span></td><td>Refresh token expired or invalid (<code>token_not_valid</code>) · You do not have permission to perform this action (logged out) — the user is signed out</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/v1/auth/logout/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Sign out; both tokens stop working. Errors are ignored by the frontend.</p>
+      <dl class="rows"><dt>Send</dt><dd><code>{access, refresh}</code></dd></dl>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/v1/users/getcurrentuser/</span></div>
+    <div class="ep-body">
+      <p class="purpose">The signed-in user and their facilities. The first facility is the one the desk works in.</p>
+      <dl class="rows"><dt>Returns</dt><dd><code>id, username, first_name, last_name, is_superuser, mfa_enabled, facilities[]</code></dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c403">403</span></td><td>Invalid Token, please relogin to continue (<code>token_not_valid</code>) · Authentication credentials were not provided.</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <h3 class="group-title" id="c-facility">Users &amp; facility</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/v1/facility/&lt;facility_id&gt;/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Reads the facility's area (<code>geo_organization.id</code>), sent with every registration so the right staff can see the patient.</p>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c404">404</span></td><td>No Facility matches the given query. (not a member) — the frontend registers without the area</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/v1/facility/&lt;facility_id&gt;/organizations/?org_type=dept</span></div>
+    <div class="ep-body">
+      <p class="purpose">The facility's departments, for appointment and quick-registration screens. <code>containing_user=</code> lists one doctor's departments.</p>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c404">404</span></td><td>No Facility matches the given query. · No User matches the given query.</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/v1/facility/ · /api/v1/users/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Facility list and staff list screens (paged, searchable). Only auth errors.</p>
+    </div>
+  </article>
+
+  <h3 class="group-title" id="c-patients">Patients</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/v1/patient/?phone_number= | name=</span></div>
+    <div class="ep-body">
+      <p class="purpose">Search patients by exact phone (E.164) or part of the name; also the duplicate check before registering.</p>
+      <dl class="rows"><dt>Returns</dt><dd><code>{count, results: [patient]}</code> — only patients in your organisations. A badly formatted number just finds nothing.</dd></dl>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/v1/patient/search/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Search beyond your own list: by ABHA (identifier config) or by phone. Phone matches come back partial and need the year of birth.</p>
+      <dl class="rows"><dt>Send</dt><dd><code>{config, value, page_size}</code> or <code>{phone_number, page_size}</code></dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Either phone number or config is required · Config not found · Value is required</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>Cannot search for patient identifier configs in this facility</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/v1/patient/search_retrieve/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Open a partial phone match after confirming the year of birth.</p>
+      <dl class="rows"><dt>Send</dt><dd><code>{phone_number, year_of_birth, partial_id}</code></dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody><tr><td><span class="s c403">403</span></td><td>No valid patients found</td></tr></tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="m delete">DELETE</span><span class="path">/api/v1/patient/&lt;patient_id&gt;/</span></div>
+    <div class="ep-body">
+      <p class="purpose">GET: the full patient with identifiers (UHID). DELETE: remove a duplicate (superuser only).</p>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>This patient has visits or billing records. Merge it into the correct record instead of deleting it.</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>Cannot delete patient</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>No Patient matches the given query. (also when you can't see the patient)</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <h3 class="group-title" id="c-files">Identifiers &amp; files</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/v1/patient_identifier_config/?status=active</span></div>
+    <div class="ep-body">
+      <p class="purpose">Patient identifier types (UHID, ABHA…). Used to find the ABHA search config and the fields staff fill in.</p>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/v1/files/upload-file/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Upload the patient photo and signed consent to the patient's record, after registration.</p>
+      <dl class="rows"><dt>Send</dt><dd><code>{original_name, file_data (base64), name, associating_id, file_type: "patient", file_category}</code></dd></dl>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>File size exceeds the limit of 5.0MB · File type '…' is not allowed · Invalid base64-encoded file data · Failed to upload file to storage</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>Cannot View File</td></tr>
+        <tr><td><span class="s c404">404</span></td><td>No Patient matches the given query.</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <h3 class="group-title" id="c-sched">Encounters &amp; scheduling</h3>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/v1/facility/&lt;id&gt;/appointments/available_users/</span></div>
+    <div class="ep-body"><p class="purpose">Doctors who take appointments, optionally by department (<code>organization_ids=</code>).</p></div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/v1/facility/&lt;id&gt;/schedule/?resource_type=practitioner&amp;resource_id=</span></div>
+    <div class="ep-body">
+      <p class="purpose">A doctor's schedules and session timings.</p>
+      <div class="errs-wrap"><table class="errs"><tbody><tr><td><span class="s c400">400</span></td><td>resource_type and resource_id are required · Schedule User is not part of the facility</td></tr></tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/v1/facility/&lt;id&gt;/slots/availability_stats/ · get_slots_for_day/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Free and booked slots per day (calendar), and the slots for one day.</p>
+      <div class="errs-wrap"><table class="errs"><tbody><tr><td><span class="s c400">400</span></td><td>From Date cannot be after To Date · Period cannot be greater than 32 days · No schedules found for this resource</td></tr></tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m post">POST</span><span class="path">/api/v1/facility/&lt;id&gt;/slots/&lt;slot_id&gt;/create_appointment/</span></div>
+    <div class="ep-body">
+      <p class="purpose">Book a slot directly (payment screen). Desk bookings use the plug's <code>/appointments/</code> instead.</p>
+      <div class="errs-wrap"><table class="errs"><tbody>
+        <tr><td><span class="s c400">400</span></td><td>Slot is already past · Slot is already full · Patient already has a booking for this slot · Patient already has maximum number of appointments (10)</td></tr>
+        <tr><td><span class="s c403">403</span></td><td>You do not have permission to create appointments</td></tr>
+      </tbody></table></div>
+    </div>
+  </article>
+
+  <article class="ep">
+    <div class="ep-head"><span class="m get">GET</span><span class="path">/api/v1/encounter/?facility=&amp;status=in_progress · /api/v1/facility/&lt;id&gt;/appointments/</span></div>
+    <div class="ep-body"><p class="purpose">Dashboard counts: active cases and total bookings (<code>limit=1</code>, reads <code>count</code>).</p></div>
+  </article>
+</section>
+
+<!-- ============ LOCAL ============ -->
+<section class="part" id="local" aria-labelledby="local-title">
+  <header><span class="eyebrow">More</span><h2 id="local-title">Next.js routes (frontend server)</h2></header>
+  <div class="table-wrap">
+    <table class="plain">
+      <thead><tr><th>Route</th><th>What it does</th><th>Errors</th></tr></thead>
+      <tbody>
+        <tr><td><code>POST /api/identity-scan</code></td><td>Capture ID: reads an ID photo with the AI model and fills the form. Checks the login with Care first.</td><td>Please sign in again before scanning (Care 401/403) · 503 when Care is unreachable</td></tr>
+        <tr><td><code>GET /api/pincode</code></td><td>Live India Post lookup when the plug's PIN directory has no match.</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="part" id="review" aria-labelledby="review-title">
+  <header><span class="eyebrow">More</span><h2 id="review-title">Points to review</h2><p>Found while reading the code. Not bugs in the screens, but worth a decision.</p></header>
+  <div class="note">
+    <ul>
+      <li><b>Desk registration facility check:</b> <code>POST /registration/</code> checks facility access only for "No phone" patients; otherwise it relies on Care's general "can create patients".</li>
+      <li><b>Convert:</b> <code>POST /patients/&lt;id&gt;/convert/</code> has no plug-side permission check; it relies on Care's patient update check.</li>
+      <li><b>Login errors are 403:</b> Care returns 403 (not 401) for wrong passwords and expired tokens. Clients must read <code>code: "token_not_valid"</code> to know when to refresh.</li>
+      <li><b>File storage:</b> document uploads need the S3 storage (Silo) settings on the backend, or they fail with "Invalid endpoint".</li>
+    </ul>
+  </div>
+</section>
+
+<p class="empty-search" id="no-results" hidden>No endpoint matches that search.</p>
+
+</main>
+</div>
+
+<script>
+(function () {
+  var input = document.getElementById("api-search");
+  var empty = document.getElementById("no-results");
+  var cards = Array.prototype.slice.call(document.querySelectorAll("article.ep"));
+  var titles = Array.prototype.slice.call(document.querySelectorAll("h3.group-title"));
+  input.addEventListener("input", function () {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    cards.forEach(function (card) {
+      var hit = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+      card.classList.toggle("hidden-by-search", !hit);
+      if (hit) shown++;
+    });
+    titles.forEach(function (title) {
+      var el = title.nextElementSibling, any = false;
+      while (el && el.tagName !== "H3") {
+        if (el.matches("article.ep") && !el.classList.contains("hidden-by-search")) any = true;
+        el = el.nextElementSibling;
+      }
+      title.classList.toggle("hidden-by-search", Boolean(q) && !any);
+    });
+    empty.hidden = !q || shown > 0;
+  });
+})();
+</script>

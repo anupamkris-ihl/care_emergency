@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emergency New Fields</title>
+<style>
+  :root {
+    --bg: #f6f8fb; --card: #ffffff; --text: #16191f; --muted: #5d6573; --border: #dfe3ea;
+    --accent: #ea720f; --accent-soft: #fdf0e4; --blue: #3462ad; --blue-soft: #e8eef8;
+    --new: #1f7a45; --new-soft: #e5f4ea; --code-bg: #f1f3f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151a; --card: #1a1e25; --text: #e7eaf0; --muted: #9aa3b2; --border: #2c323c;
+      --accent: #f08a35; --accent-soft: #3a2614; --blue: #7ea3e0; --blue-soft: #1c2738;
+      --new: #5fc68b; --new-soft: #16301f; --code-bg: #232831;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151a; --card: #1a1e25; --text: #e7eaf0; --muted: #9aa3b2; --border: #2c323c;
+    --accent: #f08a35; --accent-soft: #3a2614; --blue: #7ea3e0; --blue-soft: #1c2738;
+    --new: #5fc68b; --new-soft: #16301f; --code-bg: #232831;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { margin-bottom: 28px; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  h1 { font-size: 28px; line-height: 1.25; margin: 0; }
+  h2 { font-size: 20px; margin: 0 0 12px; }
+  h3 { font-size: 16px; margin: 20px 0 8px; }
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; margin-bottom: 20px; }
+  p { margin: 0 0 10px; }
+  ul, ol { margin: 0 0 10px; padding-left: 22px; }
+  li { margin: 3px 0; }
+  code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; background: var(--code-bg); padding: 1px 6px; border-radius: 6px; overflow-wrap: anywhere; }
+  pre { background: var(--code-bg); border-radius: 10px; padding: 12px 14px; overflow-x: auto; font-size: 13px; margin: 0 0 10px; }
+  pre code { background: none; padding: 0; }
+  .table-wrap { overflow-x: auto; margin: 0 0 10px; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr.new td { background: var(--new-soft); }
+  .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+  .tag.new { color: var(--new); background: var(--new-soft); border: 1px solid var(--new); }
+  .tag.chg { color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent); }
+  .tag.same { color: var(--muted); border: 1px solid var(--border); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 16px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; }
+  .stat b { display: block; font-size: 24px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .note { border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 8px; padding: 10px 14px; margin: 0 0 10px; }
+  .info { border-left: 4px solid var(--blue); background: var(--blue-soft); border-radius: 8px; padding: 10px 14px; margin: 0 0 10px; }
+  .muted { color: var(--muted); }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  nav a { color: var(--blue); text-decoration: none; font-size: 14px; border: 1px solid var(--border); background: var(--card); padding: 4px 12px; border-radius: 999px; }
+  nav a:hover { border-color: var(--blue); }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Emergency flow: new fields and screen changes</h1>
+  <p>What was changed in the <code>care_emergency</code> plug (backend) and <code>hmis_fe</code> (frontend), and which database tables are affected. Prepared 13 Oct 2026.</p>
+  <div class="stats">
+    <div class="stat"><b>0</b><span>new tables</span></div>
+    <div class="stat"><b>2</b><span>new columns on <code>care_emergency_emergencyencounter</code></span></div>
+    <div class="stat"><b>1</b><span>new migration (<code>0010</code>)</span></div>
+    <div class="stat"><b>127</b><span>plug tests passing</span></div>
+  </div>
+  <nav>
+    <a href="#decisions">Decisions</a><a href="#tables">Tables</a><a href="#backend">Backend</a>
+    <a href="#api">API</a><a href="#frontend">Frontend</a><a href="#local">Local setup</a><a href="#deploy">Deploy</a><a href="#open">Open items</a>
+  </nav>
+</header>
+
+<section id="decisions">
+  <h2>1. Decisions this work follows</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Topic</th><th>Decision</th></tr>
+    <tr><td>Chief complaint options</td><td>Chest pain, Breathlessness, Trauma - road traffic, Fall, Burns, Poisoning, Assault, Seizure, Unconscious, Bleeding, Labour, Other</td></tr>
+    <tr><td>Mode of arrival options</td><td>Walked in, POH ambulance, 108 ambulance, Police, Transfer from another hospital</td></tr>
+    <tr><td>Medico-legal</td><td>A <b>Medical Legal Case</b> checkbox with no default choice. Unticked = not medico-legal, and the form can be saved. Ticked = MLC nature and police station are required.</td></tr>
+    <tr><td>Triage</td><td>Kept as Red / Yellow / Green / Black. The Orange level from the v11 spec is not used.</td></tr>
+    <tr><td>Gender</td><td>Male, Female, Others. "Others" is saved as <code>non_binary</code>, the same as the desk registration screen.</td></tr>
+    <tr><td>Code Orange</td><td>Shown in the popup but disabled. Not built in this round.</td></tr>
+  </table></div>
+</section>
+
+<section id="tables">
+  <h2>2. Database tables</h2>
+  <div class="info">No new tables were created. Two columns were added to the existing plug table <code>care_emergency_emergencyencounter</code>, through migration <code>0010_emergency_complaint_arrival</code>. Care's core tables were <b>not</b> changed.</div>
+
+  <h3>care_emergency_emergencyencounter <span class="tag chg">changed</span></h3>
+  <p class="muted">One row per emergency visit. New columns are highlighted.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Column</th><th>Type</th><th>What it stores</th></tr>
+    <tr><td><code>id</code>, <code>external_id</code></td><td>bigint, uuid</td><td>Row id; <code>external_id</code> is the id used by the API</td></tr>
+    <tr><td><code>patient_id</code></td><td>bigint</td><td>Links to <code>emr_patient.id</code></td></tr>
+    <tr><td><code>encounter_id</code></td><td>bigint</td><td>Links to <code>emr_encounter.id</code> (one emergency row per visit)</td></tr>
+    <tr><td><code>facility_id</code></td><td>bigint</td><td>The facility</td></tr>
+    <tr><td><code>triage</code></td><td>varchar(10)</td><td><code>red</code>, <code>yellow</code>, <code>green</code> or <code>black</code></td></tr>
+    <tr class="new"><td><code>chief_complaint</code> <span class="tag new">new</span></td><td>varchar(40), default <code>''</code></td><td>One of the 12 chief complaints. Required for quick registration; empty for unknown patients.</td></tr>
+    <tr class="new"><td><code>mode_of_arrival</code> <span class="tag new">new</span></td><td>varchar(40), default <code>''</code></td><td>One of the 5 arrival modes. Optional; empty when not chosen.</td></tr>
+    <tr><td><code>is_medico_legal</code></td><td>boolean, null</td><td>true when the checkbox is ticked, otherwise false</td></tr>
+    <tr><td><code>mlc_nature</code></td><td>varchar(50)</td><td>e.g. <code>Road accident</code>; empty if not medico-legal</td></tr>
+    <tr><td><code>police_station</code></td><td>varchar(200)</td><td>Empty if not medico-legal</td></tr>
+    <tr><td><code>mlc_number</code></td><td>varchar(30), null</td><td><code>MLC-2026-0001</code>, issued by the server; unique per facility</td></tr>
+    <tr><td><code>distinguishing_marks</code></td><td>text</td><td>Unknown patients only</td></tr>
+    <tr><td><code>brought_by_name</code></td><td>varchar(200)</td><td>"Brought By" / "Brought By or From" text. <b>Can now be empty</b> when only a phone is given.</td></tr>
+    <tr><td><code>brought_by_phone</code></td><td>varchar(14)</td><td>The attendant's contact number</td></tr>
+    <tr><td><code>brought_by_relationship</code></td><td>varchar(50)</td><td>No longer asked on the screens; usually empty</td></tr>
+    <tr><td><code>is_unidentified</code></td><td>boolean</td><td>true = unknown screen, false = quick registration</td></tr>
+    <tr><td><code>converted_at</code>, <code>converted_by_id</code></td><td>timestamp, bigint</td><td>When and by whom full registration was completed later</td></tr>
+    <tr><td><code>created_date</code>, <code>created_by_id</code>, <code>modified_date</code>, <code>updated_by_id</code>, <code>deleted</code>, <code>history</code>, <code>meta</code></td><td></td><td>Care's standard audit columns</td></tr>
+  </table></div>
+
+  <h3>Migration 0010_emergency_complaint_arrival <span class="tag new">new</span></h3>
+<pre><code>dependencies = [('care_emergency', '0009_quick_registration')]
+operations = [
+    AddField('emergencyencounter', 'chief_complaint', CharField(blank=True, default='', max_length=40)),
+    AddField('emergencyencounter', 'mode_of_arrival', CharField(blank=True, default='', max_length=40)),
+]</code></pre>
+  <p class="muted">It was first created as <code>0008</code>, then renumbered to <code>0010</code> because a teammate's v0.7.0 and v0.8.0 already use <code>0008_nok_title_permanent_country</code> and <code>0009_quick_registration</code>. Both columns have a default, so existing rows get empty strings and nothing else is touched.</p>
+
+  <h3>Other tables an emergency registration writes to <span class="tag same">unchanged structure</span></h3>
+  <div class="table-wrap"><table>
+    <tr><th>Table</th><th>What is written</th></tr>
+    <tr><td><code>emr_patient</code> (Care)</td><td><code>name</code> (real name, or <code>Unknown &lt;n&gt;</code>), <code>gender</code>, <code>year_of_birth</code>/<code>date_of_birth</code> from age, <code>phone_number</code> = <b>emergency desk number</b>, <code>emergency_phone_number</code> = attendant's contact, <code>meta.registration</code> = title, first/middle/last name (quick registration)</td></tr>
+    <tr><td><code>emr_encounter</code> (Care)</td><td><code>encounter_class='emer'</code>, <code>status='in_progress'</code>, <code>priority</code> from triage, <code>hospitalization.admit_source='emd'</code>, <code>period.start</code></td></tr>
+    <tr><td><code>emr_patientidentifier</code> (Care)</td><td>UHID <code>POH-&lt;unit&gt;-0000001</code> (quick registration) or <code>UNK-&lt;unit&gt;-&lt;yyyymmdd&gt;-001</code> (unknown)</td></tr>
+    <tr><td><code>care_emergency_facilityunit</code></td><td>The facility's unit code (needed before any registration)</td></tr>
+    <tr><td><code>care_emergency_emergencydesk</code></td><td>The facility's emergency desk number</td></tr>
+    <tr><td><code>care_emergency_mlcsequence</code></td><td>MLC number counter per facility per year</td></tr>
+    <tr><td><code>care_emergency_patientnumbersequence</code></td><td>UHID and UNK number counters</td></tr>
+  </table></div>
+
+  <h3>Query to see emergency patients</h3>
+<pre><code>SELECT p.name, p.gender, e.triage, e.chief_complaint, e.mode_of_arrival,
+       e.is_medico_legal, e.mlc_number, e.brought_by_name, e.brought_by_phone,
+       e.is_unidentified, e.created_date
+FROM care_emergency_emergencyencounter e
+JOIN emr_patient p ON p.id = e.patient_id
+ORDER BY e.created_date DESC;</code></pre>
+</section>
+
+<section id="backend">
+  <h2>3. Backend changes (<code>care_emergency</code> plug)</h2>
+  <div class="table-wrap"><table>
+    <tr><th>File</th><th>Change</th></tr>
+    <tr><td><code>constants.py</code></td><td>Added <code>CHIEF_COMPLAINTS</code> (12 values) and <code>ARRIVAL_MODES</code> (5 values)</td></tr>
+    <tr><td><code>models.py</code></td><td>Added <code>chief_complaint</code> and <code>mode_of_arrival</code> to <code>EmergencyEncounter</code></td></tr>
+    <tr><td><code>migrations/0010_emergency_complaint_arrival.py</code></td><td>New migration adding the two columns</td></tr>
+    <tr><td><code>specs.py</code></td><td>
+      <ul>
+        <li><code>EmergencyRegisterSpec</code>: new <code>chief_complaint</code> and <code>mode_of_arrival</code>, each checked against its list; chief complaint required when <code>is_unidentified</code> is false; <code>is_medico_legal</code> now defaults to <code>false</code> (was required)</li>
+        <li><code>EmergencyUpdateSpec</code>: both new fields can be edited, with the same list checks</li>
+        <li><code>BroughtBySpec</code>: name is now optional; needs a name <i>or</i> a phone number</li>
+        <li>Moved the shared <code>one_of</code> validator above the emergency specs so they can use it</li>
+      </ul></td></tr>
+    <tr><td><code>views.py</code></td><td><code>register/</code> saves the two new fields; the encounters list gets <code>chief_complaint</code> and <code>mode_of_arrival</code> filters</td></tr>
+    <tr><td><code>serializers.py</code></td><td>Emergency responses include <code>chief_complaint</code> and <code>mode_of_arrival</code></td></tr>
+    <tr><td><code>admin.py</code></td><td>Django admin shows chief complaint and filters by both new fields</td></tr>
+    <tr><td><code>tests/test_api.py</code></td><td>New tests: medico-legal defaults to No, quick registration needs a chief complaint, unknown options rejected, brought-by needs name or phone, editing the new fields, filtering by chief complaint</td></tr>
+    <tr><td><code>tests/test_patient_numbers.py</code></td><td>The identified-patient UHID test now sends a chief complaint (now required)</td></tr>
+    <tr><td><code>README.md</code></td><td>Documented the new fields, filters and rules</td></tr>
+    <tr><td><code>pyproject.toml</code></td><td>Version <code>0.8.0</code> → <code>0.9.0</code></td></tr>
+  </table></div>
+  <p class="muted">Care core (<code>ihl-hims-backend</code>) code was not changed. Only its <code>plug_config.py</code> pin needs updating at deploy time.</p>
+</section>
+
+<section id="api">
+  <h2>4. API changes</h2>
+  <h3><code>POST /api/care_emergency/register/</code></h3>
+<pre><code>{
+  "facility": "&lt;uuid&gt;",
+  "patient": { "name": "Arun Kumar", "gender": "male", "age": 40,
+               "registration": { "prefix": "Mr", "first_name": "Arun", "last_name": "Kumar" } },
+  "triage": "red",
+  "is_unidentified": false,
+  "chief_complaint": "Chest pain",          // new; required when is_unidentified is false
+  "mode_of_arrival": "108 ambulance",       // new; optional
+  "is_medico_legal": false,                 // now optional, defaults to false
+  "brought_by": { "name": "", "phone_number": "+919898989898" }   // name now optional
+}</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Rule</th><th>Error when broken (400)</th></tr>
+    <tr><td>Quick registration without a chief complaint</td><td>Select the chief complaint</td></tr>
+    <tr><td>Chief complaint or mode of arrival not in its list</td><td>'&lt;value&gt;' is not one of: …</td></tr>
+    <tr><td>Medico-legal true without nature or police station</td><td>Select the MLC nature / Enter the police station informed</td></tr>
+    <tr><td><code>brought_by</code> sent with neither name nor phone</td><td>Enter who brought the patient in or their phone number</td></tr>
+    <tr><td>Age outside 0–120 (no date of birth)</td><td>Enter an estimated age between 0 and 120</td></tr>
+  </table></div>
+  <h3>Other endpoints</h3>
+  <ul>
+    <li><code>PATCH encounters/&lt;encounter_id&gt;/</code> accepts <code>chief_complaint</code> and <code>mode_of_arrival</code></li>
+    <li><code>GET encounters/?facility=&lt;id&gt;</code> accepts the filters <code>chief_complaint</code> and <code>mode_of_arrival</code></li>
+    <li>All emergency responses include the two new fields</li>
+  </ul>
+</section>
+
+<section id="frontend">
+  <h2>5. Frontend changes (<code>hmis_fe</code>)</h2>
+  <div class="table-wrap"><table>
+    <tr><th>File</th><th>Change</th></tr>
+    <tr><td><code>components/emergency-registration.tsx</code></td><td>Rebuilt: entry popup, Quick Registration and Unknown screens, medico-legal checkbox, unit code and desk number setup, wristband print</td></tr>
+    <tr><td><code>app/(main)/patients/new/emergency/page.tsx</code> <span class="tag new">new</span></td><td>The route again (a teammate's commit had removed it). <code>?type=quick</code> / <code>?type=unknown</code> pick the screen; without a type the popup shows</td></tr>
+    <tr><td><code>components/domestic-registration.tsx</code></td><td>The <b>Emergency</b> button on Patient Details opens the popup (it said "isn't available yet" before)</td></tr>
+    <tr><td><code>lib/emergency.ts</code></td><td>Option lists (<code>CHIEF_COMPLAINTS</code>, <code>ARRIVAL_MODES</code>, <code>MLC_NATURES</code>, matching the plug) and the new fields in the request and response types</td></tr>
+    <tr><td><code>components/patient-detail-view.tsx</code></td><td>Emergency card shows chief complaint and mode of arrival (this page currently has no route)</td></tr>
+    <tr><td><code>app/globals.css</code></td><td>Popup field and button sizing, wristband layout and print styles</td></tr>
+    <tr><td><code>docs/emergency-registration.md</code></td><td>Describes the new flow</td></tr>
+  </table></div>
+
+  <h3>Screens</h3>
+  <ul>
+    <li><b>Popup "Which Emergency Entry?"</b>: one dropdown with Emergency / Casualty (Quick Registration), Unknown / Unidentified, and Code Orange (disabled), then <b>Continue</b>. Full-width button on phones.</li>
+    <li><b>Emergency Quick Registration</b>: title + first/middle/last name, gender, age, contact (attendant, optional), chief complaint (required), mode of arrival, brought by, Medical Legal Case checkbox, triage. <b>Patient Cannot Be Identified</b> switches to the unknown screen and keeps what was typed.</li>
+    <li><b>Unknown / Unidentified Registration</b>: gender, estimated age, brought by or from, distinguishing marks, Medical Legal Case checkbox, triage. The old second "accompanying person" step was removed.</li>
+    <li><b>Medical Legal Case checkbox</b> (both screens): unticked by default; ticking shows MLC nature, auto MLC number and police station, which then become required.</li>
+    <li><b>Setup boxes</b>: if the facility has no unit code or no emergency desk number, the screen asks for it (facility admins only).</li>
+    <li><b>Create And Print Wrist Band</b>: saves, then shows a wristband (triage colour, name, UHID or UNK number, sex/age, MLC number, time, facility) and opens the print dialog. <b>Done</b> returns to the dashboard.</li>
+  </ul>
+</section>
+
+<section id="local">
+  <h2>6. Local environment work</h2>
+  <ul>
+    <li>Local Postgres (<code>127.0.0.1:5432/care</code>) only had plug migration <code>0001</code>; applied <code>0002</code>–<code>0007</code>, then the teammate's <code>0008</code>/<code>0009</code> (which needed core <code>emr.0083</code>), and recorded <code>0010</code> as applied because its columns already existed. Existing test records were kept.</li>
+    <li>Brought the plug up to date with GitHub (teammate's v0.7.0 and v0.8.0). No code conflicts; the only clash was the migration number, fixed by renumbering ours to <code>0010</code>.</li>
+    <li>Tests: <b>127 passing</b> (118 existing and ours, 9 from the teammate). Ruff, TypeScript and ESLint checks clean.</li>
+  </ul>
+</section>
+
+<section id="deploy">
+  <h2>7. Deploy steps</h2>
+  <ol>
+    <li>Commit and push the plug, then tag it:
+<pre><code>cd "D:/care backend/care-emergency/care_emergency"
+git add -A
+git commit -m "feat: emergency chief complaint, mode of arrival, optional brought-by name (v0.9.0)"
+git push origin main
+git tag v0.9.0
+git push origin v0.9.0</code></pre></li>
+    <li>In <code>ihl-hims-backend/plug_config.py</code>, change <code>version="@v0.7.0"</code> to <code>version="@v0.9.0"</code>, then commit and push. Do this after the tag exists.</li>
+    <li>After the server redeploys, run <code>python manage.py migrate care_emergency</code> (applies <code>0008</code>, <code>0009</code>, <code>0010</code>).</li>
+    <li>Set a unit code and emergency desk number for each facility (from the emergency screen or desk registration).</li>
+  </ol>
+  <div class="note">The frontend already sends the new fields. Emergency registration on a server still running plug v0.7.0 will fail until steps 1–3 are done.</div>
+</section>
+
+<section id="open">
+  <h2>8. Open items</h2>
+  <ul>
+    <li><b>Wristband barcode</b>: not added, because the project has no barcode library yet.</li>
+    <li><b>Code Orange (mass casualty)</b>: needs its own design and backend (incident model, batch identities, command view).</li>
+    <li><b>Patient detail page</b>: removed from routing by a teammate, so after printing the wristband the flow returns to the dashboard.</li>
+    <li><b>Unknown screen medico-legal</b>: uses the same checkbox as the quick screen, although its design shows a Yes/No dropdown.</li>
+  </ul>
+</section>
+
+</main>
+</body>
+</html>
