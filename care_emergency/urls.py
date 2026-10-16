@@ -13,6 +13,7 @@ from care_emergency.views import (
     PatientContactView,
     PatientMergeView,
     PatientSummaryView,
+    NewbornRegistrationView,
     PatientRegistrationView,
     PincodeView,
     PatientQuickRegistrationView,
@@ -64,6 +65,11 @@ urlpatterns = [
         name="emergency-convert",
     ),
     path("registration/", RegistrationView.as_view(), name="desk-registration"),
+    path(
+        "newborn/register/",
+        NewbornRegistrationView.as_view(),
+        name="newborn-register",
+    ),
     path(
         "registration/<uuid:patient_id>/",
         PatientRegistrationView.as_view(),

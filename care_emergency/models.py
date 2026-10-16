@@ -367,6 +367,37 @@ class ArtCouple(EMRBaseModel):
     partner_abha_address = models.CharField(max_length=60, blank=True, default="")
 
 
+class NewbornBirth(EMRBaseModel):
+    """A baby born at the facility, registered as their own patient with
+    their own UHID and linked to the mother by relationship, never by
+    identifier. Twins and triplets are one row each, sharing the delivery
+    details and numbered by birth_order."""
+
+    baby = models.OneToOneField(
+        "emr.Patient", on_delete=models.PROTECT, related_name="newborn_birth"
+    )
+    mother = models.ForeignKey(
+        "emr.Patient", on_delete=models.PROTECT, related_name="newborn_babies"
+    )
+    facility = models.ForeignKey(
+        "facility.Facility", on_delete=models.PROTECT, related_name="+"
+    )
+    born_at = models.DateTimeField()
+    birth_order = models.PositiveSmallIntegerField(default=1)
+    number_of_babies = models.PositiveSmallIntegerField(default=1)
+    delivery_type = models.CharField(max_length=30)
+    gestation_weeks = models.PositiveSmallIntegerField()
+    birth_weight_grams = models.PositiveSmallIntegerField()
+    length_cm = models.DecimalField(
+        max_digits=4, decimal_places=1, null=True, blank=True
+    )
+    head_circumference_cm = models.DecimalField(
+        max_digits=4, decimal_places=1, null=True, blank=True
+    )
+    apgar_1_min = models.PositiveSmallIntegerField(null=True, blank=True)
+    apgar_5_min = models.PositiveSmallIntegerField(null=True, blank=True)
+
+
 class RestrictedPatient(models.Model):
     """A patient under statutory confidentiality (D30). Created with the first
     flag; from then on the patient's identity is masked behind the alias for

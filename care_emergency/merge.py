@@ -37,6 +37,7 @@ from care_emergency.models import (
     ArtCouple,
     EmergencyDesk,
     EmergencyEncounter,
+    NewbornBirth,
     PatientMerge,
     PatientRegistration,
     QuickRegistration,
@@ -517,6 +518,7 @@ MOVE_LABELS = {
     "care_emergency.patientregistration": "Desk registration",
     "care_emergency.quickregistration": "Quick registration",
     "care_emergency.artcouple": "IVF couple record",
+    "care_emergency.newbornbirth": "Birth record",
     "care_emergency.statutoryflag": "Statutory flags",
 }
 
@@ -662,6 +664,10 @@ def merge_blockers(source, target):  # noqa: C901
         ArtCouple.objects.filter(woman=target, partner=source).exists()
     ):
         blockers.append("These records are the two partners of an IVF couple")
+    elif NewbornBirth.objects.filter(mother=source, baby=target).exists() or (
+        NewbornBirth.objects.filter(mother=target, baby=source).exists()
+    ):
+        blockers.append("These records are a mother and her baby")
     else:
         for field, label in (("woman", "the woman"), ("partner", "the partner")):
             if (

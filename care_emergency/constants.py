@@ -299,6 +299,21 @@ DOCUMENT_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf
 # IVF / ART couples (v12.1 D45, R51, R52; ART Act 2021 s.21(g)).
 ART_WOMAN_AGES = (21, 50)
 ART_MAN_AGES = (21, 55)
+# Newborn registration (born at the facility).
+DELIVERY_TYPES = [
+    "Normal vaginal",
+    "Assisted vaginal",
+    "Elective caesarean",
+    "Emergency caesarean",
+]
+NEWBORN_GENDERS = ["male", "female", "other"]
+NEWBORN_MAX_BABIES = 4
+NEWBORN_GESTATION_WEEKS = (22, 44)
+NEWBORN_WEIGHT_GRAMS = (300, 6000)
+NEWBORN_LENGTH_CM = (20, 70)
+NEWBORN_HEAD_CM = (15, 50)
+# How long after birth a baby can still be registered as a newborn.
+NEWBORN_REGISTRATION_DAYS = 28
 
 
 # "I don't know whom to meet" (v12.1 D50). A red flag sends the patient to

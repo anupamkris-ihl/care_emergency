@@ -9,6 +9,7 @@ from care_emergency.models import (
     EmergencyEncounter,
     FacilityUnit,
     MlcSequence,
+    NewbornBirth,
     PatientDocument,
     PatientNumberSequence,
     PatientRegistration,
@@ -134,6 +135,12 @@ class PatientDocumentAdmin(admin.ModelAdmin):
 class ArtCoupleAdmin(admin.ModelAdmin):
     list_display = ("woman", "partner", "single_woman", "art_consent", "created_date")
     raw_id_fields = ("woman", "partner", "facility", "created_by", "updated_by")
+
+
+@admin.register(NewbornBirth)
+class NewbornBirthAdmin(admin.ModelAdmin):
+    list_display = ("baby", "mother", "born_at", "birth_order", "created_date")
+    raw_id_fields = ("baby", "mother", "facility", "created_by", "updated_by")
 
 
 @admin.register(RestrictedPatient)

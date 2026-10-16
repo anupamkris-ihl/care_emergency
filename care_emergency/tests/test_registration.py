@@ -756,6 +756,104 @@ class DeskRegistrationTests(CareAPITestBase):
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    def update(self, patient, body):
+        return self.client.put(
+            reverse("desk-registration-detail", args=[patient.external_id]),
+            body,
+            format="json",
+        )
+
+    def test_update_edits_patient_and_registration_and_keeps_uhid(self):
+        self.register(
+            self.body(
+                is_vip=True, vip_note="Minister", vip_authorised_by="Medical Director"
+            )
+        )
+        patient = Patient.objects.get()
+        uhid = patient.instance_identifiers
+        record = PatientRegistration.objects.get(patient=patient)
+        self.assertEqual(record.vip_flagged_by, self.user)
+        body = self.body(
+            patient={"name": "Neha Verma", "address": "D-4, Ring Road"},
+            last_name="Verma",
+            house="D-4",
+            allergy_status="nka",
+            allergies=[],
+            is_vip=True,
+            vip_note="Minister",
+            vip_authorised_by="Medical Director",
+        )
+        editor = self.create_super_user(username="editor")
+        self.client.force_authenticate(user=editor)
+        response = self.update(patient, body)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        patient.refresh_from_db()
+        record.refresh_from_db()
+        self.assertEqual(patient.name, "Neha Verma")
+        self.assertEqual(patient.instance_identifiers, uhid)
+        self.assertEqual(record.last_name, "Verma")
+        self.assertEqual(record.house, "D-4")
+        self.assertEqual(record.allergies.count(), 0)
+        # The original flagger is kept while the patient stays VIP.
+        self.assertEqual(record.vip_flagged_by, self.user)
+        self.assertEqual(record.updated_by, editor)
+        self.assertEqual(PatientRegistration.objects.count(), 1)
+
+        response = self.update(patient, self.body(allergy_status="nka", allergies=[]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        record.refresh_from_db()
+        self.assertIsNone(record.vip_flagged_by)
+
+    def test_update_applies_registration_rules(self):
+        self.register(self.body())
+        patient = Patient.objects.get()
+        response = self.update(patient, self.body(first_name="N"))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("first name", str(response.data))
+        response = self.update(patient, {**self.body(), "pre_registration": True})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            PatientRegistration.objects.get(patient=patient).first_name, "Neha"
+        )
+
+    def test_update_counts_documents_already_on_the_patient(self):
+        corporate = {
+            "registration_type": "CORP",
+            "payer_type": "Corporate",
+            "payer_name": "Infosys",
+            "employee_id": "INF-2231",
+            "policy_holder_relationship": "Self",
+        }
+        self.register(self.body())
+        patient = Patient.objects.get()
+        response = self.update(patient, self.body(**corporate))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("the payer card", str(response.data))
+        letter = stage_document(self.user, "payer_card", "single")
+        response = self.update(patient, self.body(documents=[letter], **corporate))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(PatientDocument.objects.get().patient, patient)
+        # The card is on the record now, so later edits don't need it again.
+        response = self.update(patient, self.body(remarks="Edited", **corporate))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+    def test_update_creates_a_missing_registration(self):
+        self.register(self.body())
+        patient = Patient.objects.get()
+        PatientRegistration.objects.all().delete()
+        response = self.update(patient, self.body(allergy_status="nka", allergies=[]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        record = PatientRegistration.objects.get(patient=patient)
+        self.assertEqual(record.facility, self.facility)
+        self.assertEqual(record.created_by, self.user)
+
+    def test_update_needs_write_access(self):
+        self.register(self.body())
+        patient = Patient.objects.get()
+        self.client.force_authenticate(user=self.create_user())
+        response = self.update(patient, self.body(remarks="Edited"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
     def no_phone_body(self, **registration):
         return self.body(
             patient={"phone_number": None},

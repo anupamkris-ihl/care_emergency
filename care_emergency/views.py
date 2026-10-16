@@ -51,6 +51,7 @@ from care_emergency.models import (
     EmergencyDesk,
     EmergencyEncounter,
     FacilityUnit,
+    NewbornBirth,
     PatientDocument,
     PatientRegistration,
     PostOffice,
@@ -63,11 +64,13 @@ from care_emergency.models import (
 from care_emergency.contact import is_desk_phone
 from care_emergency.merge import (
     can_merge,
+    is_unconverted_emergency,
     last_visits,
     merge_preview,
     merge_patients,
     resolve_merged,
 )
+from care_emergency.newborn import baby_name, baby_registration, serialize_birth
 from care_emergency.pincodes import lookup as lookup_pincode
 from care_emergency.pincodes import plug_setting
 from care_emergency.restricted import can_see_identity, new_alias, restriction_of
@@ -102,6 +105,7 @@ from care_emergency.specs import (
     AppointmentBookSpec,
     BreakGlassSpec,
     DeskRegisterSpec,
+    DeskRegistrationUpdateSpec,
     DeskContactSpec,
     RegistrationSpec,
     DeskWriteSpec,
@@ -109,6 +113,7 @@ from care_emergency.specs import (
     EmergencyRegisterSpec,
     EmergencyUpdateSpec,
     MedicoLegalMixin,
+    NewbornRegisterSpec,
     PatientMergeSpec,
     PatientNumberIssueSpec,
     PatientSummarySpec,
@@ -458,6 +463,16 @@ class ConvertView(EmergencyAPIView):
         )
 
 
+def registration_columns(registration):
+    """PatientRegistration column values from a RegistrationSpec. Phone
+    numbers are optional; the columns keep "" for none."""
+    details = registration.model_dump(exclude={"allergies"})
+    return {
+        key: "" if value is None and key.endswith(("_number", "_phone")) else value
+        for key, value in details.items()
+    }
+
+
 class RegistrationView(EmergencyAPIView):
     """Front-desk registration: creates the Care patient, its
     PatientRegistration row, an IVF partner and the desk documents in one
@@ -466,12 +481,7 @@ class RegistrationView(EmergencyAPIView):
     def post(self, request):
         spec = DeskRegisterSpec.model_validate(request.data)
         facility = get_facility(spec.facility) if spec.facility else None
-        details = spec.registration.model_dump(exclude={"allergies"})
-        # Phone numbers are optional; the columns keep "" for none.
-        details = {
-            key: "" if value is None and key.endswith(("_number", "_phone")) else value
-            for key, value in details.items()
-        }
+        details = registration_columns(spec.registration)
         patient_body = dict(spec.patient)
         if spec.registration.mobile_owner == "No phone":
             if not can("can_register_patient_at_facility_obj", request.user, facility):
@@ -584,6 +594,101 @@ class RegistrationView(EmergencyAPIView):
         )
 
 
+class NewbornRegistrationView(EmergencyAPIView):
+    """Registers the babies of one delivery: each baby becomes their own Care
+    patient with their own UHID and a desk registration inherited from the
+    mother's, linked to her by a NewbornBirth row. One transaction, so twins
+    are registered together or not at all."""
+
+    def post(self, request):
+        spec = NewbornRegisterSpec.model_validate(request.data)
+        facility = get_facility(spec.facility)
+        if not can("can_register_patient_at_facility_obj", request.user, facility):
+            raise PermissionDenied("You do not have access to this facility")
+        mother = get_object_or_404(Patient, external_id=spec.mother)
+        if not can("can_view_patient_obj", request.user, mother):
+            raise PermissionDenied("You do not have permission to view the mother")
+        if restriction_of(mother) and not can_see_identity(request.user, mother):
+            # The baby's name would carry the mother's masked identity.
+            raise PermissionDenied(
+                "The mother's record is restricted. Ask her clinician to register the baby"
+            )
+        if mother.gender != "female":
+            raise ValidationError("The mother's record must be a female patient")
+        if is_unconverted_emergency(mother):
+            raise ValidationError(
+                "Complete the mother's emergency registration before registering the baby"
+            )
+        mother_record = PatientRegistration.objects.filter(patient=mother).first()
+        geo_organization = mother.geo_organization or facility.geo_organization
+        unit_code(facility)
+
+        number_of_babies = len(spec.babies)
+        babies = []
+        with transaction.atomic():
+            for order, baby in enumerate(spec.babies, start=1):
+                # Care holds one patient-create lock until commit; the babies
+                # have no staff-entered identifiers for it to check.
+                PatientCreateLock().release()
+                data = care_view(PatientViewSet, request, "create").handle_create(
+                    {
+                        "name": baby_name(mother.name, order, number_of_babies),
+                        "gender": baby.gender,
+                        "date_of_birth": timezone.localtime(baby.born_at)
+                        .date()
+                        .isoformat(),
+                        "phone_number": mother.phone_number,
+                        "address": mother.address,
+                        "permanent_address": mother.permanent_address,
+                        "pincode": mother.pincode,
+                        "geo_organization": str(geo_organization.external_id)
+                        if geo_organization
+                        else None,
+                    }
+                )
+                patient = Patient.objects.get(external_id=data["id"])
+                issue_patient_number(patient, facility)
+                PatientRegistration.objects.create(
+                    patient=patient,
+                    facility=facility,
+                    created_by=request.user,
+                    updated_by=request.user,
+                    **baby_registration(mother, mother_record, baby.gender),
+                )
+                birth = NewbornBirth.objects.create(
+                    baby=patient,
+                    mother=mother,
+                    facility=facility,
+                    born_at=baby.born_at,
+                    birth_order=order,
+                    number_of_babies=number_of_babies,
+                    delivery_type=spec.delivery_type,
+                    gestation_weeks=spec.gestation_weeks,
+                    birth_weight_grams=baby.birth_weight_grams,
+                    length_cm=baby.length_cm,
+                    head_circumference_cm=baby.head_circumference_cm,
+                    apgar_1_min=baby.apgar_1_min,
+                    apgar_5_min=baby.apgar_5_min,
+                    created_by=request.user,
+                    updated_by=request.user,
+                )
+                patient.refresh_from_db()
+                babies.append(
+                    {
+                        "patient": PatientRetrieveSpec.serialize(patient).to_json(),
+                        "birth": serialize_birth(birth),
+                    }
+                )
+
+        return Response(
+            {
+                "mother": str(mother.external_id),
+                "inherited": mother_record is not None,
+                "babies": babies,
+            }
+        )
+
+
 class PatientRegistrationView(EmergencyAPIView):
     def get(self, request, patient_id):
         patient = get_object_or_404(Patient, external_id=patient_id)
@@ -599,6 +704,70 @@ class PatientRegistrationView(EmergencyAPIView):
         if restriction and not can_see_identity(request.user, patient):
             return Response(serialize_restricted_registration(record, restriction))
         return Response(serialize_registration(record))
+
+    def put(self, request, patient_id):
+        """Edits a registered patient with the registration form: Care's own
+        patient update, then the desk record (created for a patient who has
+        none, e.g. one registered before the plug). The UHID is kept."""
+        patient = get_object_or_404(Patient, external_id=patient_id)
+        if not can("can_write_patient_obj", request.user, patient):
+            raise PermissionDenied("You do not have permission to edit this patient")
+        if restriction_of(patient) and not can_see_identity(request.user, patient):
+            raise PermissionDenied("This patient's record is restricted")
+        if EmergencyEncounter.objects.filter(
+            patient=patient, converted_at__isnull=True
+        ).exists():
+            raise ValidationError("Complete the patient's emergency registration first")
+        spec = DeskRegistrationUpdateSpec.model_validate(request.data)
+        facility = get_facility(spec.facility) if spec.facility else None
+        details = registration_columns(spec.registration)
+        patient_body = dict(spec.patient)
+        if spec.registration.mobile_owner == "No phone":
+            desk = EmergencyDesk.objects.filter(facility=facility).first()
+            if desk is None:
+                raise ValidationError(
+                    "Set the emergency desk number for this facility first"
+                )
+            patient_body["phone_number"] = desk.phone_number
+        elif is_desk_phone(patient_body.get("phone_number")):
+            raise ValidationError("Select No phone instead of entering the desk number")
+
+        with transaction.atomic():
+            documents = staged_documents(request.user, spec.documents)
+            existing = list(PatientDocument.objects.filter(patient=patient))
+            missing = missing_documents(spec.registration, existing + documents)
+            if missing:
+                err = f"Upload {', '.join(missing)}"
+                raise ValidationError(err)
+            care_view(
+                PatientViewSet, request, "update", external_id=str(patient_id)
+            ).handle_update(patient, patient_body)
+            record = PatientRegistration.objects.filter(patient=patient).first()
+            if record is None:
+                record = PatientRegistration(
+                    patient=patient, facility=facility, created_by=request.user
+                )
+            for key, value in details.items():
+                setattr(record, key, value)
+            # Whoever first flagged the VIP stays recorded while the flag is on.
+            if not spec.registration.is_vip:
+                record.vip_flagged_by = None
+            elif record.vip_flagged_by is None:
+                record.vip_flagged_by = request.user
+            record.updated_by = request.user
+            record.save()
+            record.allergies.all().delete()
+            RegistrationAllergy.objects.bulk_create(
+                RegistrationAllergy(registration=record, **allergy.model_dump())
+                for allergy in spec.registration.allergies
+            )
+            attach_documents(documents, patient)
+            patient.refresh_from_db()
+            patient_data = PatientRetrieveSpec.serialize(patient).to_json()
+
+        return Response(
+            {"patient": patient_data, "registration": serialize_registration(record)}
+        )
 
 
 def quick_form_link(record):

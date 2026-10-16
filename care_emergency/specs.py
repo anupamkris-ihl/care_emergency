@@ -18,6 +18,7 @@ from care_emergency.constants import (
     COMMUNICATION_CHANNELS,
     CONSENT_GIVERS,
     CONSENT_METHODS,
+    DELIVERY_TYPES,
     DESK_ARRIVAL_SOURCES,
     FRRO_C_FORM,
     GUARDIAN_RELATIONSHIPS,
@@ -30,6 +31,13 @@ from care_emergency.constants import (
     MARITAL_STATUSES,
     MLC_NATURES,
     MOBILE_OWNERS,
+    NEWBORN_GENDERS,
+    NEWBORN_GESTATION_WEEKS,
+    NEWBORN_HEAD_CM,
+    NEWBORN_LENGTH_CM,
+    NEWBORN_MAX_BABIES,
+    NEWBORN_REGISTRATION_DAYS,
+    NEWBORN_WEIGHT_GRAMS,
     NATIONALITY_CATEGORIES,
     PAYER_TYPES,
     PHONE_OWNERS,
@@ -577,6 +585,58 @@ class CoupleSpec(BaseModel):
         return self
 
 
+class NewbornBabySpec(BaseModel):
+    gender: str
+    born_at: datetime.datetime
+    birth_weight_grams: int = Field(
+        ge=NEWBORN_WEIGHT_GRAMS[0], le=NEWBORN_WEIGHT_GRAMS[1]
+    )
+    length_cm: float | None = Field(
+        default=None, ge=NEWBORN_LENGTH_CM[0], le=NEWBORN_LENGTH_CM[1]
+    )
+    head_circumference_cm: float | None = Field(
+        default=None, ge=NEWBORN_HEAD_CM[0], le=NEWBORN_HEAD_CM[1]
+    )
+    apgar_1_min: int | None = Field(default=None, ge=0, le=10)
+    apgar_5_min: int | None = Field(default=None, ge=0, le=10)
+
+    _gender = field_validator("gender")(one_of(NEWBORN_GENDERS, blank=False))
+
+    @field_validator("born_at")
+    @classmethod
+    def validate_born_at(cls, value):
+        if value.tzinfo is None:
+            raise ValueError("The time of birth needs a time zone")
+        now = timezone.now()
+        # A minute of grace for the desk clock running ahead of the server.
+        if value > now + datetime.timedelta(minutes=1):
+            raise ValueError("The time of birth can't be in the future")
+        if value < now - datetime.timedelta(days=NEWBORN_REGISTRATION_DAYS):
+            err = (
+                f"Babies older than {NEWBORN_REGISTRATION_DAYS} days are "
+                "registered as regular patients"
+            )
+            raise ValueError(err)
+        return value
+
+
+class NewbornRegisterSpec(BaseModel):
+    """A delivery at the facility: the mother (an existing patient) and one
+    entry per baby. Each baby becomes their own patient."""
+
+    facility: UUID4
+    mother: UUID4
+    delivery_type: str
+    gestation_weeks: int = Field(
+        ge=NEWBORN_GESTATION_WEEKS[0], le=NEWBORN_GESTATION_WEEKS[1]
+    )
+    babies: list[NewbornBabySpec] = Field(min_length=1, max_length=NEWBORN_MAX_BABIES)
+
+    _delivery_type = field_validator("delivery_type")(
+        one_of(DELIVERY_TYPES, blank=False)
+    )
+
+
 class DeskRegisterSpec(BaseModel):
     facility: UUID4 | None = None
     # Passed through to Care's PatientCreateSpec.
@@ -820,6 +880,20 @@ class DeskRegisterSpec(BaseModel):
             raise ValueError(
                 "The policy-holder relationship does not match age and payer"
             )
+
+
+class DeskRegistrationUpdateSpec(DeskRegisterSpec):
+    """Edits an existing patient's desk registration: the same body and rules
+    as registering, without the couple or a pre-registration number, which
+    only apply when the patient is created."""
+
+    @model_validator(mode="after")
+    def validate_update(self):
+        if self.pre_registration:
+            raise ValueError("A registered patient can't be pre-registered")
+        if self.couple is not None:
+            raise ValueError("An IVF / ART couple can't be changed by editing")
+        return self
 
 
 class AppointmentBookSpec(BaseModel):

@@ -1,7 +1,8 @@
 from django.utils import timezone
 
 from care_emergency.constants import CONSULTATION_ENCOUNTER_CLASS
-from care_emergency.models import ArtCouple, BreakGlassAccess
+from care_emergency.models import ArtCouple, BreakGlassAccess, NewbornBirth
+from care_emergency.newborn import serialize_birth
 
 
 def serialize_desk(desk):
@@ -165,6 +166,7 @@ def serialize_registration(record):
         if record.vip_flagged_by
         else None,
         "couple": serialize_couple(record.patient),
+        "birth": serialize_newborn(record.patient),
         "restricted": False,
         "created_date": record.created_date,
         "created_by": record.created_by.username if record.created_by else None,
@@ -183,6 +185,15 @@ def serialize_restricted_registration(record, restriction):
         "alias": restriction.alias,
         "created_date": record.created_date,
     }
+
+
+def serialize_newborn(patient):
+    birth = (
+        NewbornBirth.objects.filter(baby=patient)
+        .select_related("baby", "mother", "facility")
+        .first()
+    )
+    return serialize_birth(birth) if birth else None
 
 
 def serialize_couple(patient):
