@@ -520,3 +520,15 @@ class PatientMerge(EMRBaseModel):
     source_snapshot = models.JSONField(default=dict)
     # Label -> number of the source's records moved to the target.
     moved = models.JSONField(default=dict)
+
+
+class LabTestRule(EMRBaseModel):
+    """POH's per-test rules for a lab test (an ActivityDefinition): how long the
+    patient fasts before the sample, and whether the report is sensitive, so it's
+    printed, sealed and handed over in person only (FO-19, D53)."""
+
+    activity_definition = models.OneToOneField(
+        "emr.ActivityDefinition", on_delete=models.CASCADE, related_name="poh_lab_rule"
+    )
+    fasting_hours = models.PositiveSmallIntegerField(null=True, blank=True)
+    sensitive_report = models.BooleanField(default=False)
