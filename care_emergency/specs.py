@@ -7,6 +7,7 @@ from django.utils import timezone
 from pydantic import UUID4, BaseModel, Field, field_validator, model_validator
 
 from care_emergency.constants import (
+    APP_SERVER_USERNAME,
     ABHA_STATUSES,
     ALLERGY_SEVERITIES,
     ALLERGY_STATUSES,
@@ -1015,6 +1016,27 @@ def allowed_titles(gender, minor):
     return titles
 
 
+def check_person(spec):
+    """Name, title, gender and date of birth of a quick or app registration;
+    tidies the name parts in place."""
+    spec.first_name = " ".join(spec.first_name.split())
+    spec.last_name = " ".join(spec.last_name.split())
+    one_of(TITLES, blank=False)(spec.title)
+    one_of(["male", "female", "non_binary", "transgender"], blank=False)(spec.gender)
+    if not re.fullmatch(NAME_PART, spec.first_name):
+        raise ValueError("The first name must be 2-40 letters with single spaces")
+    if spec.last_name and not re.fullmatch(LAST_NAME, spec.last_name):
+        raise ValueError("The last name can only have letters and single spaces")
+    today = timezone.localdate()
+    if not datetime.date(1900, 1, 1) <= spec.date_of_birth <= today:
+        raise ValueError("Date of birth must be between 1900 and today")
+    age = years_old(spec.date_of_birth, today)
+    if age > 120:  # noqa: PLR2004
+        raise ValueError("Age must be between 0 and 120")
+    if spec.title not in allowed_titles(spec.gender, age < 18):  # noqa: PLR2004
+        raise ValueError("The title does not match the patient's gender and age")
+
+
 class QuickRegisterSpec(BaseModel):
     """Quick Register: what the desk takes on a phone call to block a slot."""
 
@@ -1034,26 +1056,7 @@ class QuickRegisterSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_patient(self):
-        self.first_name = " ".join(self.first_name.split())
-        self.last_name = " ".join(self.last_name.split())
-        one_of(TITLES, blank=False)(self.title)
-        one_of(["male", "female", "non_binary", "transgender"], blank=False)(
-            self.gender
-        )
-        if not re.fullmatch(NAME_PART, self.first_name):
-            raise ValueError("The first name must be 2-40 letters with single spaces")
-        if self.last_name and not re.fullmatch(
-            r"(?=.{1,40}\Z)[A-Za-z]+( [A-Za-z]+)*", self.last_name
-        ):
-            raise ValueError("The last name can only have letters and single spaces")
-        today = timezone.localdate()
-        if not datetime.date(1900, 1, 1) <= self.date_of_birth <= today:
-            raise ValueError("Date of birth must be between 1900 and today")
-        age = years_old(self.date_of_birth, today)
-        if age > 120:  # noqa: PLR2004
-            raise ValueError("Age must be between 0 and 120")
-        if self.title not in allowed_titles(self.gender, age < 18):  # noqa: PLR2004
-            raise ValueError("The title does not match the patient's gender and age")
+        check_person(self)
         if not (self.department or self.doctor):
             raise ValueError("Choose a department or a doctor")
         return self
@@ -1126,3 +1129,79 @@ class PatientMergeSpec(BaseModel):
     @classmethod
     def strip_reason(cls, value):
         return value.strip() if isinstance(value, str) else value
+
+
+class ApiKeyCreateSpec(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    # The user the key acts as; its requests get this user's roles. The patient
+    # app's server account unless another client needs its own user.
+    username: str = Field(default=APP_SERVER_USERNAME, min_length=1, max_length=150)
+    expires_at: datetime.datetime | None = None
+
+    @field_validator("name", "username")
+    @classmethod
+    def strip(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("This field is required")
+        return value
+
+    @field_validator("expires_at")
+    @classmethod
+    def in_future(cls, value):
+        if value is not None and value <= timezone.now():
+            raise ValueError("The expiry must be in the future")
+        return value
+
+
+class AppRegisterSpec(BaseModel):
+    """A profile completed in the patient app (docs/app-server.md). The
+    app's own id for the person makes the call safe to repeat."""
+
+    app_user_id: str = Field(pattern=r"^[A-Za-z0-9._:-]{1,64}$")
+    # Whose series the PRE- reference comes from: the facility the person
+    # picked in the app.
+    facility: UUID4
+    title: str
+    first_name: str
+    last_name: str = ""
+    date_of_birth: datetime.date
+    gender: str
+    # Verified by the app with an OTP.
+    phone_number: PhoneNumber = Field(max_length=14)
+    email: str = Field(default="", max_length=254)
+    address: str = Field(default="", max_length=500)
+    pincode: str = Field(default="", pattern=r"^(?:[1-9]\d{5})?$")
+    abha_number: str = Field(default="", pattern=r"^(?:\d{14})?$")
+    # Care keeps an ABHA number only with the person's consent.
+    identity_storage_consent: bool = False
+
+    @model_validator(mode="after")
+    def validate_person(self):
+        check_person(self)
+        self.email = self.email.strip()
+        self.address = " ".join(self.address.split())
+        if self.email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", self.email):
+            raise ValueError("Enter a valid email address")
+        if self.abha_number and not self.identity_storage_consent:
+            raise ValueError("Consent is required to store the ABHA number")
+        return self
+
+
+class AppointmentUpdateSpec(BaseModel):
+    """What can change on a booking without moving it."""
+
+    note: str | None = Field(default=None, max_length=1000)
+    consultation_type: ConsultationTypes | None = None
+    visit_purpose: VisitPurposes | None = None
+    chief_complaint: str | None = Field(default=None, max_length=500)
+
+
+class AppointmentCancelSpec(BaseModel):
+    reason: Literal["cancelled", "entered_in_error"] = "cancelled"
+    note: str = Field(default="", max_length=1000)
+
+
+class AppointmentRescheduleSpec(BaseModel):
+    slot: UUID4
+    note: str = Field(default="", max_length=1000)

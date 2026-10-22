@@ -262,6 +262,10 @@ def serialize_appointment(details):
     return {
         "id": str(details.external_id),
         "booking": str(details.booking.external_id),
+        "status": details.booking.status,
+        "patient": str(details.booking.patient.external_id),
+        "slot_start": details.booking.token_slot.start_datetime,
+        "slot_end": details.booking.token_slot.end_datetime,
         "facility": str(details.facility.external_id),
         "appointment_number": details.appointment_number,
         "consultation_type": details.consultation_type,

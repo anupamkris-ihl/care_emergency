@@ -1,4 +1,4 @@
-from care.emr.models import Encounter
+from care.emr.models import Encounter, FacilityOrganization
 from care.emr.models.charge_item import ChargeItem
 from care.emr.models.invoice import Invoice
 from care.emr.models.payment_reconciliation import PaymentReconciliation
@@ -6,6 +6,7 @@ from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
 from care_emergency.constants import CONSULTATION_ENCOUNTER_CLASS, PatientNumberSeries
+from care_emergency.app_server import grant_new_facility
 from care_emergency.billing import sync_billing_tags
 from care_emergency.billing_rules import (
     check_charge_item,
@@ -78,3 +79,12 @@ def apply_payment_rules(sender, instance, **kwargs):
     """Whole-rupee amounts, advance purpose, refund cause and approval, and the
     receipt number (billing_rules)."""
     check_payment(instance)
+
+
+@receiver(
+    post_save, sender=FacilityOrganization, dispatch_uid="care_emergency_app_server"
+)
+def grant_app_server(sender, instance, created, **kwargs):
+    """The app server books at every facility, new ones included."""
+    if created and instance.org_type == "root" and instance.system_generated:
+        grant_new_facility(instance)

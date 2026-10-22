@@ -6,7 +6,11 @@ from care.emr.api.viewsets.base import emr_exception_handler
 from care.emr.api.viewsets.encounter import EncounterViewSet
 from care.emr.api.viewsets.file_upload import file_authorizer
 from care.emr.api.viewsets.patient import PatientViewSet
-from care.emr.api.viewsets.scheduling.availability import SlotViewSet
+from care.emr.api.viewsets.scheduling.availability import (
+    SlotViewSet,
+    lock_create_appointment,
+)
+from care.emr.api.viewsets.scheduling.booking import TokenBookingViewSet
 from care.emr.locks.billing import PatientCreateLock
 from care.emr.models import ActivityDefinition, Encounter, FacilityOrganization, Patient
 from care.emr.models.organization import FacilityOrganizationUser
@@ -15,7 +19,10 @@ from care.emr.models.scheduling.booking import TokenSlot
 from care.emr.models.scheduling.schedule import Availability
 from care.emr.resources.encounter.constants import COMPLETED_CHOICES
 from care.emr.resources.patient.spec import PatientRetrieveSpec
-from care.emr.resources.scheduling.slot.spec import TokenBookingReadSpec
+from care.emr.resources.scheduling.slot.spec import (
+    BookingStatusChoices,
+    TokenBookingReadSpec,
+)
 from care.facility.models import Facility
 from care.security.authorization import AuthorizationController
 from care.users.models import User
@@ -28,6 +35,8 @@ from django.db import transaction
 from django.utils import timezone
 from django_filters import rest_framework as filters
 from rest_framework import status
+from django.db import IntegrityError
+from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
@@ -35,7 +44,14 @@ from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
 
+from care_emergency.api_keys import key_state, new_key
+from care_emergency.app_server import (
+    check_service_patient,
+    link_app_patient,
+    linked_patients,
+)
 from care_emergency.constants import (
+    APP_SERVER_USERNAME,
     BREAK_GLASS_HOURS,
     QUICK_FORM_LINK_DAYS,
     DOCUMENT_MIME_TYPES,
@@ -45,6 +61,8 @@ from care_emergency.constants import (
     PatientNumberSeries,
 )
 from care_emergency.models import (
+    ApiKey,
+    AppPatientLink,
     AppointmentDetails,
     ArtCouple,
     BreakGlassAccess,
@@ -108,12 +126,18 @@ from care_emergency.services import (
     display_numbers,
     issue_patient_number,
     missing_documents,
+    patient_number,
     staged_documents,
     store_document,
     unit_code,
 )
 from care_emergency.specs import (
+    ApiKeyCreateSpec,
+    AppRegisterSpec,
     AppointmentBookSpec,
+    AppointmentCancelSpec,
+    AppointmentRescheduleSpec,
+    AppointmentUpdateSpec,
     BreakGlassSpec,
     DeskRegisterSpec,
     DeskRegistrationUpdateSpec,
@@ -1352,7 +1376,8 @@ class AppointmentFilters(filters.FilterSet):
 
 class AppointmentViewSet(GenericViewSet):
     """Books through Care's own slot booking and adds the desk details in the
-    same transaction. Looked up by the Care booking id."""
+    same transaction. Looked up by the Care booking id. A service account
+    (the app server) only sees and changes bookings of patients linked to it."""
 
     lookup_field = "booking__external_id"
     lookup_url_kwarg = "booking_id"
@@ -1364,11 +1389,22 @@ class AppointmentViewSet(GenericViewSet):
 
     def get_queryset(self):
         qs = AppointmentDetails.objects.select_related(
-            "booking", "booking__token_slot__resource", "facility", "created_by"
+            "booking",
+            "booking__patient",
+            "booking__token_slot__resource",
+            "facility",
+            "created_by",
         ).order_by("-created_date")
+        user = self.request.user
+        if user.is_service_account:
+            qs = qs.filter(booking__patient__in=linked_patients(user))
+            facility = self.request.query_params.get("facility")
+            if self.action == "list" and facility:
+                qs = qs.filter(facility=get_facility(facility))
+            return qs
         if self.action == "list":
             facility = get_facility(self.request.query_params.get("facility"))
-            if not can("can_list_booking_on_facility", self.request.user, facility):
+            if not can("can_list_booking_on_facility", user, facility):
                 raise PermissionDenied("You do not have permission to view bookings")
             return qs.filter(facility=facility)
         return qs
@@ -1399,6 +1435,8 @@ class AppointmentViewSet(GenericViewSet):
         )
         if not can_on_resource("can_create_booking", request.user, slot.resource):
             raise PermissionDenied("You do not have permission to create appointments")
+        patient = get_object_or_404(Patient, external_id=spec.patient)
+        check_service_patient(request.user, patient)
 
         with transaction.atomic():
             # Locks the slot so allocated is current when Care checks capacity.
@@ -1413,12 +1451,6 @@ class AppointmentViewSet(GenericViewSet):
                 },
                 request.user,
             )
-            reminder_due_at = None
-            if spec.booking_channel == BookingChannels.phone:
-                due = slot.start_datetime - datetime.timedelta(
-                    hours=REMINDER_LEAD_TIME_HOURS
-                )
-                reminder_due_at = due if due > care_now() else None
             details = AppointmentDetails.objects.create(
                 booking=booking,
                 facility=slot.resource.facility,
@@ -1427,7 +1459,7 @@ class AppointmentViewSet(GenericViewSet):
                 visit_purpose=spec.visit_purpose
                 or default_visit_purpose(slot, booking.patient),
                 booking_channel=spec.booking_channel,
-                reminder_due_at=reminder_due_at,
+                reminder_due_at=reminder_due(slot, spec.booking_channel),
                 guidance_area=spec.guidance_area,
                 guidance_since=spec.guidance_since,
                 chief_complaint=spec.chief_complaint,
@@ -1441,6 +1473,104 @@ class AppointmentViewSet(GenericViewSet):
                 "details": serialize_appointment(details),
             }
         )
+
+    def get_open_booking(self):
+        """The booking to change, if the caller may write it and it hasn't
+        been cancelled, attended or started."""
+        details = self.get_object()
+        booking = details.booking
+        if not can_on_resource(
+            "can_write_booking", self.request.user, booking.token_slot.resource
+        ):
+            raise PermissionDenied("You do not have permission to change this booking")
+        if booking.status != BookingStatusChoices.booked.value:
+            raise ValidationError("Only a booked appointment can be changed")
+        return details
+
+    def partial_update(self, request, *args, **kwargs):
+        spec = AppointmentUpdateSpec.model_validate(request.data)
+        with transaction.atomic():
+            details = self.get_open_booking()
+            booking = details.booking
+            if spec.note is not None:
+                booking.note = spec.note
+                booking.updated_by = request.user
+                booking.save(update_fields=["note", "updated_by", "modified_date"])
+            for field in ("consultation_type", "visit_purpose", "chief_complaint"):
+                value = getattr(spec, field)
+                if value is not None:
+                    setattr(details, field, value.strip() if field == "chief_complaint" else value)
+            details.updated_by = request.user
+            details.save()
+        return Response(serialize_appointment(details))
+
+    @action(detail=True, methods=["POST"])
+    def cancel(self, request, *args, **kwargs):
+        spec = AppointmentCancelSpec.model_validate(request.data)
+        with transaction.atomic():
+            details = self.get_open_booking()
+            TokenBookingViewSet.cancel_appointment_handler(
+                details.booking,
+                {"reason": spec.reason, "note": spec.note or None},
+                request.user,
+            )
+            details.reminder_due_at = None
+            details.updated_by = request.user
+            details.save(update_fields=["reminder_due_at", "updated_by", "modified_date"])
+        return Response(serialize_appointment(details))
+
+    @action(detail=True, methods=["POST"])
+    def reschedule(self, request, *args, **kwargs):
+        """Moves the appointment to another slot at the same facility. Care
+        marks the old booking rescheduled and makes a new one; the APT number
+        and desk details move to the new booking."""
+        spec = AppointmentRescheduleSpec.model_validate(request.data)
+        with transaction.atomic():
+            details = self.get_open_booking()
+            old = details.booking
+            if not can("can_reschedule_booking", request.user, details.facility):
+                raise PermissionDenied(
+                    "You do not have permission to reschedule appointments"
+                )
+            slot = get_object_or_404(
+                TokenSlot.objects.select_for_update(of=("self",)).select_related(
+                    "resource__facility", "availability"
+                ),
+                external_id=spec.slot,
+                resource__facility=details.facility,
+            )
+            if slot.id == old.token_slot_id:
+                raise ValidationError("Choose a different slot")
+            if not can_on_resource("can_create_booking", request.user, slot.resource):
+                raise PermissionDenied(
+                    "You do not have permission to book this slot"
+                )
+            check_walk_in_reserve(slot, details.booking_channel)
+            TokenBookingViewSet.cancel_appointment_handler(
+                old, {"reason": BookingStatusChoices.rescheduled}, request.user
+            )
+            booking = lock_create_appointment(
+                slot, old.patient, request.user, spec.note or old.note
+            )
+            details.booking = booking
+            details.reminder_due_at = reminder_due(slot, details.booking_channel)
+            details.reminder_sent_at = None
+            details.updated_by = request.user
+            details.save()
+        return Response(
+            {
+                "booking": TokenBookingReadSpec.serialize(booking).to_json(),
+                "details": serialize_appointment(details),
+            }
+        )
+
+
+def reminder_due(slot, booking_channel):
+    """Phone bookings get an SMS before the slot, if that is still ahead."""
+    if booking_channel != BookingChannels.phone:
+        return None
+    due = slot.start_datetime - datetime.timedelta(hours=REMINDER_LEAD_TIME_HOURS)
+    return due if due > care_now() else None
 
 
 class WalkInReserveView(EmergencyAPIView):
@@ -1558,3 +1688,216 @@ class LabTariffView(EmergencyAPIView):
         if not can("can_write_facility_activity_definition", request.user, facility):
             raise PermissionDenied("Only facility admins can edit lab tests")
         return Response({"results": lab_tariff(facility)})
+
+
+def serialize_api_key(api_key):
+    return {
+        "id": str(api_key.external_id),
+        "name": api_key.name,
+        "prefix": api_key.prefix,
+        "username": api_key.user.username,
+        "state": key_state(api_key),
+        "created_by": api_key.created_by.username if api_key.created_by else None,
+        "created_date": api_key.created_date,
+        "expires_at": api_key.expires_at,
+        "revoked_at": api_key.revoked_at,
+        "last_used_at": api_key.last_used_at,
+    }
+
+
+def username_error(message):
+    return ValidationError({"errors": [{"loc": ["username"], "msg": message}]})
+
+
+def check_key_admin(request):
+    # A key can't manage keys, even a superuser's, so a leaked key can't mint more.
+    if isinstance(request.auth, ApiKey) or not request.user.is_superuser:
+        raise PermissionDenied("Only administrators can manage API keys")
+
+
+class ApiKeyView(EmergencyAPIView):
+    """Settings → API keys: keys for clients such as the patient mobile app."""
+
+    def get(self, request):
+        check_key_admin(request)
+        keys = ApiKey.objects.filter(deleted=False).select_related(
+            "user", "created_by"
+        )
+        return Response(
+            {"results": [serialize_api_key(key) for key in keys.order_by("-id")]}
+        )
+
+    def post(self, request):
+        check_key_admin(request)
+        spec = ApiKeyCreateSpec.model_validate(request.data)
+        user = User.objects.filter(username=spec.username, deleted=False).first()
+        if user is None and spec.username == APP_SERVER_USERNAME:
+            raise username_error(
+                "The app server account isn't set up yet; run setup_app_server"
+            )
+        if user is None or not user.is_active:
+            raise username_error("No active user has this username")
+        if user.is_superuser:
+            # A leaked key would hand out the whole system.
+            raise username_error("A key can't act as a superuser; use a staff user")
+        key, prefix, key_hash = new_key()
+        api_key = ApiKey.objects.create(
+            name=spec.name,
+            user=user,
+            prefix=prefix,
+            key_hash=key_hash,
+            expires_at=spec.expires_at,
+            created_by=request.user,
+            updated_by=request.user,
+        )
+        # The only time the key is sent: it can't be recovered from its hash.
+        return Response(
+            {**serialize_api_key(api_key), "key": key},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ApiKeyRevokeView(EmergencyAPIView):
+    def post(self, request, key_id):
+        check_key_admin(request)
+        api_key = get_object_or_404(ApiKey, external_id=key_id, deleted=False)
+        if api_key.revoked_at is None:
+            api_key.revoked_at = timezone.now()
+            api_key.updated_by = request.user
+            api_key.save(update_fields=["revoked_at", "updated_by", "modified_date"])
+        return Response(serialize_api_key(api_key))
+
+
+def abha_matches(abha_number):
+    """Live patients with this ABHA number, in Care's registration details or
+    the desk record."""
+    ids = set(
+        Patient.objects.filter(
+            meta__registration__abha_number=abha_number
+        ).values_list("id", flat=True)
+    ) | set(
+        PatientRegistration.objects.filter(abha_number=abha_number).values_list(
+            "patient_id", flat=True
+        )
+    )
+    return list(Patient.objects.filter(id__in=ids))
+
+
+def app_patient_body(spec, registration):
+    """Care's patient fields from the app profile. The registration details
+    the desk may already hold are kept; the app's fields are laid over them."""
+    registration = {
+        **registration,
+        "prefix": spec.title,
+        "first_name": spec.first_name,
+        # Care's registration wants 2+ letters; a lone initial stays in the name.
+        "last_name": spec.last_name if len(spec.last_name) > 1 else "",
+        "email": spec.email,
+    }
+    if spec.abha_number:
+        registration.update(
+            abha_number=spec.abha_number,
+            abha_status="has",
+            identity_storage_consent=True,
+        )
+    return {
+        "name": f"{spec.first_name} {spec.last_name}".strip(),
+        "gender": spec.gender,
+        "phone_number": spec.phone_number,
+        "date_of_birth": spec.date_of_birth.isoformat(),
+        "address": spec.address or None,
+        "pincode": int(spec.pincode) if spec.pincode else None,
+        "registration": registration,
+    }
+
+
+def serialize_app_patient(link):
+    patient = link.patient
+    return {
+        "app_user_id": link.app_user_id,
+        "matched": link.matched,
+        "uhid": patient_number(patient, PatientNumberSeries.uhid),
+        "pre_registration_number": patient_number(
+            patient, PatientNumberSeries.pre_registration
+        ),
+        "patient": PatientRetrieveSpec.serialize(patient).to_json(),
+    }
+
+
+class AppPatientView(EmergencyAPIView):
+    """The patient app's server registers a person when they finish their
+    profile (docs/app-server.md). Safe to repeat: the app's id finds the
+    same patient, whose details are then updated. A new patient gets a PRE-
+    reference; the UHID comes on payment or at the first visit. A verified
+    ABHA number that belongs to exactly one patient links that patient
+    instead, without changing their details."""
+
+    def post(self, request):
+        if not request.user.is_service_account:
+            raise PermissionDenied("Only the app server registers app profiles")
+        spec = AppRegisterSpec.model_validate(request.data)
+        facility = get_facility(spec.facility)
+        if not can("can_register_patient_at_facility_obj", request.user, facility):
+            raise PermissionDenied("You do not have access to this facility")
+        if is_desk_phone(spec.phone_number):
+            raise ValidationError("Enter the person's own mobile number")
+        unit_code(facility)
+
+        link = AppPatientLink.objects.select_related("patient").filter(
+            app_user_id=spec.app_user_id
+        ).first()
+        if link:
+            check_service_patient(request.user, link.patient)
+            if not link.matched:
+                with transaction.atomic():
+                    patient = link.patient
+                    care_view(
+                        PatientViewSet,
+                        request,
+                        "update",
+                        external_id=str(patient.external_id),
+                    ).handle_update(
+                        patient,
+                        app_patient_body(
+                            spec, (patient.meta or {}).get("registration") or {}
+                        ),
+                    )
+                link.patient.refresh_from_db()
+            return Response(serialize_app_patient(link))
+
+        try:
+            with transaction.atomic():
+                matches = abha_matches(spec.abha_number) if spec.abha_number else []
+                if len(matches) == 1:
+                    patient = matches[0]
+                else:
+                    data = care_view(PatientViewSet, request, "create").handle_create(
+                        app_patient_body(spec, {})
+                    )
+                    patient = Patient.objects.get(external_id=data["id"])
+                    issue_patient_number(
+                        patient, facility, PatientNumberSeries.pre_registration
+                    )
+                link = AppPatientLink.objects.create(
+                    app_user_id=spec.app_user_id,
+                    patient=patient,
+                    matched=len(matches) == 1,
+                    created_by=request.user,
+                    updated_by=request.user,
+                )
+                link_app_patient(request.user, patient)
+        except IntegrityError as e:
+            # Two calls for the same new profile at once; the other one won.
+            raise ValidationError("This profile is already being registered") from e
+        return Response(serialize_app_patient(link), status=status.HTTP_201_CREATED)
+
+
+class AppPatientDetailView(EmergencyAPIView):
+    def get(self, request, app_user_id):
+        link = get_object_or_404(
+            AppPatientLink.objects.select_related("patient"), app_user_id=app_user_id
+        )
+        check_service_patient(request.user, link.patient)
+        if not can("can_view_patient_obj", request.user, link.patient):
+            raise PermissionDenied("You do not have permission to view this patient")
+        return Response(serialize_app_patient(link))

@@ -2,7 +2,11 @@ from django.urls import path
 from rest_framework.routers import SimpleRouter
 
 from care_emergency.views import (
+    ApiKeyRevokeView,
+    ApiKeyView,
     AppointmentViewSet,
+    AppPatientDetailView,
+    AppPatientView,
     BreakGlassView,
     ConvertView,
     DeskView,
@@ -38,6 +42,18 @@ router.register("encounters", EmergencyEncounterViewSet, basename="emergency-enc
 router.register("appointments", AppointmentViewSet, basename="desk-appointment")
 
 urlpatterns = [
+    path("app/patients/", AppPatientView.as_view(), name="app-patients"),
+    path(
+        "app/patients/<str:app_user_id>/",
+        AppPatientDetailView.as_view(),
+        name="app-patient",
+    ),
+    path("api-keys/", ApiKeyView.as_view(), name="api-keys"),
+    path(
+        "api-keys/<uuid:key_id>/revoke/",
+        ApiKeyRevokeView.as_view(),
+        name="api-key-revoke",
+    ),
     path(
         "patients/search/",
         PatientNumberSearchView.as_view(),

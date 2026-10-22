@@ -243,6 +243,8 @@ class BookingChannels(models.TextChoices):
     front_desk = "front_desk", "Front desk"
     phone = "phone", "Phone"
     online = "online", "Online"
+    # Booked by the patient app's server (KB source code APP-ORG).
+    app = "app", "Mobile app"
 
 
 # Phone bookings get an SMS this long before the slot starts.
@@ -376,3 +378,23 @@ BREAK_GLASS_HOURS = 1
 
 # Quick registration (phone booking): how long the full-form link stays open.
 QUICK_FORM_LINK_DAYS = 7
+
+# The patient app's server (docs/app-server.md). One service account acts for
+# the app. Its facility role lets it register patients and book at every
+# facility, but not list patients or other people's bookings. The patient role
+# is attached to each patient the app registers (Care's PatientUser), so it
+# reads and edits those patients only.
+APP_SERVER_USERNAME = "poh-app-server"
+APP_SERVER_ROLE = "App server"
+APP_SERVER_PERMISSIONS = [
+    "can_create_patient",
+    "can_read_facility",
+    "can_view_facility_organization",
+    "can_read_healthcare_service",
+    "can_list_schedule",
+    "can_list_booking",
+    "can_write_booking",
+    "can_reschedule_booking",
+]
+APP_PATIENT_ROLE = "App server patient"
+APP_PATIENT_PERMISSIONS = ["can_list_patients", "can_write_patient"]

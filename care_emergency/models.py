@@ -532,3 +532,35 @@ class LabTestRule(EMRBaseModel):
     )
     fasting_hours = models.PositiveSmallIntegerField(null=True, blank=True)
     sensitive_report = models.BooleanField(default=False)
+
+
+class ApiKey(EMRBaseModel):
+    """A long-lived key a client such as the patient mobile app sends instead of
+    logging in. Requests made with it act as `user`, so they get exactly that
+    user's roles. Only the key's SHA-256 is kept; the key itself is shown once,
+    when it is created. Settings → API keys (superusers) creates and revokes them."""
+
+    name = models.CharField(max_length=100)
+    user = models.ForeignKey(
+        "users.User", on_delete=models.CASCADE, related_name="poh_api_keys"
+    )
+    # The start of the key, so a key in a client's config can be matched to its row.
+    prefix = models.CharField(max_length=16)
+    key_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+
+class AppPatientLink(EMRBaseModel):
+    """The patient app's own id for a person and the Care patient it stands
+    for. Each app profile, family members included, has its own row. The app
+    server can only see and book for patients linked this way."""
+
+    app_user_id = models.CharField(max_length=64, unique=True)
+    patient = models.ForeignKey(
+        "emr.Patient", on_delete=models.PROTECT, related_name="app_links"
+    )
+    # Linked to a patient who already existed (same ABHA number) rather than
+    # created by the app. The app doesn't overwrite such a patient's details.
+    matched = models.BooleanField(default=False)

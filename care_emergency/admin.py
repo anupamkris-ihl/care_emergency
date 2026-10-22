@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from care_emergency.models import (
+    ApiKey,
     AppointmentDetails,
     AppointmentSequence,
     ArtCouple,
@@ -170,4 +171,17 @@ class BreakGlassAccessAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ApiKey)
+class ApiKeyAdmin(admin.ModelAdmin):
+    """Keys are created in Settings → API keys, which shows the key once."""
+
+    list_display = ("name", "prefix", "user", "expires_at", "revoked_at", "last_used_at")
+    search_fields = ("name", "prefix", "user__username")
+    raw_id_fields = ("user", "created_by", "updated_by")
+    readonly_fields = ("prefix", "key_hash", "last_used_at")
+
+    def has_add_permission(self, request):
         return False
